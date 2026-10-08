@@ -4,112 +4,2021 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0d1117">
-<title>Switch 电量</title>
+<title>怪异任务编辑器</title>
 <style>
-  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --sub:#8b949e; --accent:#58a6ff; --ok:#3fb950; --err:#f85149; }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body {
-    margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+  :root{
+    --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --sub:#8b949e;
+    --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --err:#f85149; --line:#30363d;
+    --dragon:#bc8cff;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;background:var(--bg);color:var(--fg);min-height:100vh;
     font-family:-apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
-    display:flex; flex-direction:column; align-items:center; justify-content:center;
-    padding:24px; gap:20px;
+    padding-bottom:40px;
   }
-  .card {
-    background:var(--card); border:1px solid #30363d; border-radius:16px;
-    padding:28px 32px; width:100%; max-width:360px; text-align:center;
-    box-shadow:0 8px 24px rgba(0,0,0,.4);
+  header{
+    position:sticky;top:0;z-index:20;background:rgba(13,17,23,.92);
+    backdrop-filter:blur(8px);border-bottom:1px solid var(--line);
+    padding:12px 16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
   }
-  h1 { font-size:16px; font-weight:600; margin:0 0 4px; color:var(--sub); letter-spacing:.5px; }
-  .batt { font-size:72px; font-weight:800; line-height:1.1; margin:8px 0; }
-  .batt .unit { font-size:28px; font-weight:600; color:var(--sub); }
-  .bar { height:14px; background:#21262d; border-radius:8px; overflow:hidden; margin:16px 0; }
-  .bar > i { display:block; height:100%; width:0; background:linear-gradient(90deg,#3fb950,#58a6ff); transition:width .5s ease; }
-  .status { font-size:13px; color:var(--sub); margin-top:8px; }
-  .status.ok { color:var(--ok); }
-  .status.err { color:var(--err); }
-  button {
-    margin-top:20px; width:100%; padding:14px; font-size:16px; font-weight:600;
-    color:#fff; background:var(--accent); border:0; border-radius:12px; cursor:pointer;
-    transition:opacity .2s;
+  header h1{font-size:18px;margin:0;font-weight:700;letter-spacing:.5px}
+  header h1 span{color:var(--accent)}
+  .spacer{flex:1}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--sub);display:inline-block}
+  .dot.ok{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+  .dot.err{background:var(--err)}
+  .stat{font-size:12px;color:var(--sub)}
+  .wrap{max-width:920px;margin:0 auto;padding:16px}
+  .toolbar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+  input,select,button{
+    font-family:inherit;font-size:14px;border-radius:9px;border:1px solid var(--line);
+    background:var(--card);color:var(--fg);padding:9px 12px;outline:none;
   }
-  button:active { opacity:.7; }
-  button:disabled { opacity:.4; cursor:not-allowed; }
-  .cfg { margin-top:8px; font-size:12px; color:var(--sub); }
-  .cfg input { width:100%; margin-top:6px; padding:8px; border-radius:8px;
-    border:1px solid #30363d; background:#0d1117; color:var(--fg); font-size:13px; }
+  input:focus,select:focus{border-color:var(--accent)}
+  button{background:var(--accent);color:#fff;border:0;font-weight:600;cursor:pointer;transition:opacity .15s}
+  button:active{opacity:.7}
+  button.ghost{background:var(--card);border:1px solid var(--line);color:var(--fg)}
+  button.warn{background:var(--warn)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  #search{flex:1;min-width:150px}
+  .grid{display:grid;gap:12px}
+  @media(min-width:640px){ .grid{grid-template-columns:1fr 1fr} }
+
+  .q{
+    background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
+    cursor:pointer;transition:border-color .15s,transform .1s;position:relative;
+  }
+  .q:active{transform:scale(.99)}
+  .q:hover{border-color:var(--accent)}
+  /* 删除按钮（卡片右上角） */
+  .q .del{
+    position:absolute;top:8px;right:8px;width:30px;height:30px;border-radius:8px;
+    background:transparent;border:1px solid transparent;color:var(--sub);
+    font-size:15px;line-height:1;padding:0;display:flex;align-items:center;justify-content:center;
+    z-index:2;cursor:pointer;
+  }
+  .q .del:hover{background:rgba(248,81,73,.15);border-color:var(--err);color:var(--err)}
+  .q .top{display:flex;align-items:center;gap:8px;margin-bottom:6px;padding-right:34px}
+  .q .no{font-weight:700;font-size:15px;color:var(--accent)}
+  .q .idx{font-size:11px;color:var(--sub);background:#161b22;padding:2px 6px;border-radius:6px}
+  .q .lv{font-size:12px;background:#21262d;padding:2px 8px;border-radius:20px;color:var(--sub)}
+  .q .ty{font-size:12px;padding:2px 8px;border-radius:20px;margin-left:auto}
+  .ty.hunt{background:rgba(63,185,80,.15);color:var(--ok)}
+  .ty.slay{background:rgba(248,81,73,.15);color:var(--err)}
+  .ty.other{background:rgba(210,153,34,.15);color:var(--warn)}
+  .q .map{font-size:13px;color:var(--sub);margin-bottom:6px}
+  .q .mons{display:flex;flex-wrap:wrap;gap:6px}
+  .mon{font-size:12px;background:#21262d;border:1px solid var(--line);padding:2px 8px;border-radius:8px}
+  .mon.inv{border-color:var(--warn);color:var(--warn)}
+  /* 第一个怪：突出 */
+  .mon.primary{background:rgba(88,166,255,.18);border-color:var(--accent);color:var(--accent);font-weight:700;font-size:13px}
+  /* 目标内的其它怪：稍微突出（弱于第一个） */
+  .mon.secondary{background:rgba(88,166,255,.08);border-color:#3d5a80;color:#a9c7e8}
+  .tags{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+  .tag{font-size:11px;padding:1px 7px;border-radius:6px;background:#21262d;color:var(--sub)}
+  .tag.sp{background:rgba(188,140,255,.15);color:var(--dragon)}
+  .tag.spc{background:rgba(63,185,80,.15);color:var(--ok)}
+  .tag.lock{background:rgba(210,153,34,.15);color:var(--warn)}
+  .tag.new{background:rgba(88,166,255,.15);color:var(--accent)}
+
+  .overlay{
+    position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:50;
+    display:none;align-items:flex-end;justify-content:center;
+  }
+  .overlay.show{display:flex}
+  .sheet{
+    background:var(--card);width:100%;max-width:600px;max-height:90vh;overflow-y:auto;
+    border-radius:18px 18px 0 0;padding:18px 18px 30px;border:1px solid var(--line);
+    animation:up .22s ease;
+  }
+  @media(min-width:640px){ .overlay{align-items:center} .sheet{border-radius:18px} }
+  @keyframes up{from{transform:translateY(30px);opacity:.4}to{transform:none;opacity:1}}
+  .sheet h2{margin:0 0 4px;font-size:17px}
+  .sheet .sub{color:var(--sub);font-size:12px;margin-bottom:14px}
+  .frow{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #21262d}
+  .frow label{flex:1;font-size:13px;color:var(--sub);min-width:70px}
+  .frow input{width:88px;text-align:right;padding:7px 9px;font-size:13px}
+  .frow .pick{width:auto;padding:7px 10px;font-size:13px;background:#21262d;color:var(--accent);
+    border:1px solid var(--line);border-radius:8px;flex:none}
+  .frow .nm{font-size:12px;color:var(--ok);min-width:70px;flex:none}
+  .frow .hintv{font-size:11px;color:var(--sub);min-width:56px;flex:none;text-align:left}
+  .sec{font-size:12px;color:var(--accent);font-weight:700;margin:16px 0 4px;letter-spacing:1px}
+  .hint{font-size:11px;color:var(--sub);margin-top:12px;line-height:1.6}
+  .toast{
+    position:fixed;left:50%;bottom:30px;transform:translateX(-50%);
+    background:#21262d;border:1px solid var(--line);color:var(--fg);
+    padding:10px 18px;border-radius:10px;font-size:13px;z-index:99;opacity:0;
+    transition:opacity .2s;pointer-events:none;max-width:90vw;text-align:center;
+  }
+  .toast.show{opacity:1}
+  .loading{text-align:center;padding:60px 20px;color:var(--sub)}
+  .spin{width:32px;height:32px;border:3px solid var(--line);border-top-color:var(--accent);
+        border-radius:50%;margin:0 auto 14px;animation:sp 1s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  .picker{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:80;display:none;
+    align-items:center;justify-content:center;padding:16px}
+  .picker.show{display:flex}
+  .picker .box{background:var(--card);border:1px solid var(--line);border-radius:16px;
+    width:100%;max-width:460px;max-height:80vh;display:flex;flex-direction:column}
+  .picker .hd{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center}
+  .picker .hd b{font-size:15px}
+  .picker .hd input{flex:1}
+  .picker .items{overflow-y:auto;padding:8px}
+  .picker .it{padding:10px 12px;border-radius:9px;cursor:pointer;display:flex;justify-content:space-between;gap:8px}
+  .picker .it:hover,.picker .it.on{background:#21262d}
+  .picker .it .id{color:var(--sub);font-size:12px}
+
+  /* 底部进度条（读取任务时显示） */
+  .progressbar{
+    position:fixed;left:0;right:0;bottom:0;z-index:70;
+    background:rgba(22,27,34,.97);border-top:1px solid var(--accent);
+    padding:10px 16px calc(10px + env(safe-area-inset-bottom));
+    display:none;transition:transform .2s;
+  }
+  .progressbar.show{display:block}
+  .progressbar .pbar-txt{font-size:12px;color:var(--fg);margin-bottom:6px;text-align:center}
+  .progressbar .pbar-track{height:6px;background:#21262d;border-radius:4px;overflow:hidden}
+  .progressbar .pbar-fill{height:100%;width:0;background:var(--accent);border-radius:4px;
+    transition:width .15s linear}
 </style>
 </head>
 <body>
 
-<div class="card">
-  <h1>🔋 NINTENDO SWITCH</h1>
-  <div class="batt"><span id="val">--</span><span class="unit">%</span></div>
-  <div class="bar"><i id="bar"></i></div>
-  <div class="status" id="status">未连接</div>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1 id="titleEl" style="cursor:pointer">🐉 怪异任务<span>编辑器</span> <span id="jsTag" style="font-size:11px;color:#3fb950"></span></h1>
+  <span class="spacer"></span>
+  <span class="stat" id="modeTag" style="font-size:11px;font-weight:700"></span>
+  <span class="stat" id="stat">未连接</span>
+  <button class="ghost" id="cfgBtn" style="padding:5px 10px;font-size:12px">⚙️ 中转地址</button>
+</header>
 
-  <button id="btn">读取电量</button>
-
-  <div class="cfg">
-    中转地址
-    <input id="bridge" value="http://127.0.0.1:8080" />
-  </div>
+<!-- JS 自检标记：JS 执行后会隐藏它（若一直可见 = JS 没跑） -->
+<div id="jsCheck" style="background:#f85149;color:#fff;padding:12px;text-align:center;font-size:14px">
+  ⚠️ JavaScript 没有执行！<br>
+  <span style="font-size:12px">这个页面需要 JS 才能工作。可能是浏览器禁用了 JS，或直接预览 HTML 时不运行脚本。<br>
+  请改用浏览器打开：<b id="jsCheckUrl">（正在生成…）</b></span>
 </div>
 
+<div class="wrap">
+  <div class="toolbar">
+    <input id="search" placeholder="搜索：编号 / 怪物 / 地图…" />
+    <select id="sort">
+      <option value="序号-desc" selected>序号 ↓</option>
+      <option value="序号-asc">序号 ↑</option>
+      <option value="编号-asc">编号 ↑</option>
+      <option value="编号-desc">编号 ↓</option>
+      <option value="index-asc">内存顺序 ↑</option>
+      <option value="index-desc">内存顺序 ↓</option>
+    </select>
+    <button id="addBtn">➕ 添加任务</button>
+    <button id="batch" class="warn">⚡ 批量改任务</button>
+    <button id="exportBtn" class="ghost">📤 导出文件</button>
+    <button id="openBtn" class="ghost">📥 打开文件</button>
+    <button id="writeBackBtn" class="ghost">⬆️ 上传到游戏</button>
+    <button id="reload" class="ghost">🔄 读取游戏任务</button>
+    <input type="file" id="importFile" accept=".json,application/json" style="display:none" />
+  </div>
+  <div id="list" class="grid"></div>
+  <div id="loading" class="loading" style="display:none"></div>
+</div>
+
+<div class="overlay" id="overlay"><div class="sheet" id="sheet"></div></div>
+
+<div class="picker" id="picker"><div class="box">
+  <div class="hd"><b id="pkTitle">选择</b><input id="pkSearch" inputmode="none" placeholder="搜索…" /></div>
+  <div class="items" id="pkItems"></div>
+</div></div>
+
+<!-- 底部进度条 -->
+<div class="progressbar" id="progressbar">
+  <div class="pbar-txt">读取中…</div>
+  <div class="pbar-track"><div class="pbar-fill"></div></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- 逻辑全部在 js/ 里（按依赖顺序加载） -->
+<!-- ===== data.js ===== -->
 <script>
-// 页面加载时自动改用当前主机的 8080（方便从手机/电脑浏览器打开）
-(function autoHost(){
-  const inp = document.getElementById('bridge');
-  const h = location.hostname;
-  if (h && h !== 'localhost' && h !== '127.0.0.1' && h !== '') {
-    inp.value = `http://${h}:8080`;
+/* ============================================================
+ * data.js —— 所有静态数据（怪物/地图/等级/枚举/字段定义）
+ * 以后加怪、改字段，只改这个文件即可，其它文件不用动。
+ * 来源：金手指 D2FD97779381FB9A.txt 提取，真机验证
+ * ============================================================ */
+
+// ---------- 怪物 ID 表（完整 ID，非低字节）----------
+var MONSTERS = {
+  // 低段
+  0x01: "雌火龙", 0x02: "火龙", 0x03: "奇怪龙", 0x04: "岩龙",
+  0x07: "角龙", 0x13: "大名盾蟹", 0x14: "将军镰蟹", 0x17: "金狮子",
+  0x18: "钢龙", 0x19: "霞龙", 0x1B: "炎王龙", 0x20: "轰龙",
+  0x25: "迅龙", 0x2A: "冰牙龙", 0x2C: "土砂龙", 0x2F: "水兽",
+  0x36: "眠狗龙王", 0x39: "雷狼龙", 0x3B: "毒狗龙王", 0x3C: "青熊兽",
+  0x3D: "白兔兽", 0x3E: "皮球", 0x47: "黑蚀龙", 0x48: "天廻龙",
+  0x4D: "千刃龙", 0x51: "电龙", 0x52: "泡狐龙", 0x59: "怨虎龙",
+  0x5A: "天狗兽", 0x5B: "伞鸟", 0x5C: "河童蛙", 0x5D: "人鱼龙",
+  0x5E: "妃蜘蛛", 0x5F: "泥翁龙", 0x61: "雪鬼兽", 0x62: "镰鼬龙王",
+  0x64: "蛮颚龙", 0x66: "毒妖鸟", 0x6B: "搔鸟", 0x6C: "泥鱼龙",
+  0x6D: "飞雷龙", 0x76: "爆鳞龙", 0x7C: "冰呪龙", 0x84: "爵银龙",
+  0x85: "冰狼龙", 0x86: "刚缠兽", 0x88: "棘龙",
+  // 高段（亚种/特殊个体）
+  0x15A: "绯天狗兽", 0x15D: "冰人鱼龙", 0x15E: "炽妃蜘蛛", 0x15F: "熔翁龙",
+  0x188: "棘茶龙",
+  0x201: "金火龙", 0x202: "银火龙", 0x225: "月迅龙", 0x252: "焰狐龙",
+  0x517: "激昂金狮子", 0x547: "混沌黑蚀龙", 0x556: "神秘红光天彗龙",
+  0x559: "嗟怨震天怨虎龙", 0x576: "红莲爆鳞龙", 0x584: "原初爵银龙",
+  // 霸主
+  0x701: "霸主雌火龙", 0x702: "霸主火龙", 0x707: "霸主角龙",
+  0x739: "霸主雷狼龙", 0x73C: "霸主青熊兽", 0x752: "霸主泡狐龙",
+  // 怪异克服
+  0x818: "怪异克服钢龙", 0x819: "怪异克服霞龙", 0x81B: "怪异克服炎王龙",
+  0x848: "怪异克服天廻龙", 0x856: "怪异克服天彗龙赫耀"
+};
+
+// ---------- 怪物等级表 [主等级, 副等级] ----------
+// 主 = 作为怪物1时用；副 = 作为怪物2~5/乱入时用
+var MON_LEVELS = {
+  0x000: [0, 11],
+  0x001: [2, 1], 0x002: [4, 3], 0x003: [1, 1], 0x004: [1, 1],
+  0x007: [4, 3], 0x013: [1, 0], 0x014: [2, 2], 0x017: [5, 4],
+  0x018: [11, 4], 0x019: [11, 4], 0x01B: [11, 4], 0x020: [4, 3],
+  0x025: [3, 2], 0x02A: [3, 2], 0x02C: [1, 0], 0x02F: [1, 0],
+  0x036: [0, 0], 0x039: [4, 3], 0x03B: [0, 0], 0x03C: [0, 0],
+  0x03D: [0, 0], 0x03E: [0, 0], 0x047: [5, 3], 0x048: [11, 4],
+  0x04D: [4, 3], 0x051: [4, 3], 0x052: [4, 3], 0x059: [3, 2],
+  0x05A: [1, 1], 0x05B: [1, 0], 0x05C: [1, 0], 0x05D: [2, 1],
+  0x05E: [3, 2], 0x05F: [3, 2], 0x061: [3, 2], 0x062: [0, 0],
+  0x064: [2, 1], 0x066: [2, 1], 0x06B: [0, 0], 0x06C: [2, 1],
+  0x06D: [2, 1], 0x076: [5, 4], 0x07C: [11, 5], 0x084: [11, 4],
+  0x085: [4, 3], 0x086: [3, 2], 0x088: [5, 3],
+  0x15A: [2, 1], 0x15D: [3, 2], 0x15E: [5, 3], 0x15F: [4, 3],
+  0x188: [6, 5],
+  0x201: [6, 5], 0x202: [6, 5], 0x225: [11, 5], 0x252: [11, 5],
+  0x517: [6, 5], 0x547: [7, 5], 0x556: [11, 5], 0x559: [6, 5],
+  0x576: [6, 5], 0x584: [11, 5],
+  0x701: [11, 11], 0x702: [11, 11], 0x707: [11, 11],
+  0x739: [11, 11], 0x73C: [11, 11], 0x752: [11, 11],
+  0x818: [7, 11], 0x819: [7, 11], 0x81B: [7, 11],
+  0x848: [8, 11], 0x856: [8, 11]
+};
+
+// ---------- 地图 ID 表 ----------
+var MAPS = {
+  1: "废神社", 2: "沙原", 3: "水没林", 4: "冰封群岛", 5: "熔岩洞",
+  0x09: "狱泉乡", 0x0A: "斗技场", 0x0C: "密林", 0x0D: "城塞高地", 0x0E: "塔之秘境"
+};
+
+// ---------- 枚举 ----------
+var ENUMS = {
+  "任务类型": { 1: "狩猎", 2: "讨伐" },
+  "锁定": { 0: "不锁定", 1: "锁定" },
+  "时间限制": { 25: "25分", 30: "30分", 35: "35分", 50: "50分" },
+  "猫车次数": { 1: "1次", 2: "2次", 3: "3次", 4: "4次", 5: "5次", 9: "9次" },
+  "参加人数": { 2: "2人", 4: "4人" },
+  "出发时间": { 0: "默认", 1: "白天", 2: "黑夜" },
+  "新任务叹号": { 0: "无", 1: "有" },
+  "超特通过状态": { 0: "未通过", 1: "已通过" },
+  "超特许可": { 0: "无", 1: "有" },
+  "超特新叹号": { 0: "无", 1: "有" }
+};
+
+// ---------- 字段定义 ----------
+// kind: num=数字 | enum=枚举 | mon=怪物ID | map=地图ID
+// linked: 选中后要联动的字段名
+// slot: 怪物槽位（1~5，6=乱入）—— 选怪时 slot1 填主等级，其余填副等级
+var FIELDS = [
+  { off: 0x00, size: 4, name: "序号", kind: "num", hint: "第N个任务（游戏按此从大到小显示）" },
+  { off: 0x04, size: 4, name: "编号", kind: "num", hint: "700000 起" },
+  { off: 0x08, size: 4, name: "等级", kind: "num", hint: "0~300" },
+  { off: 0x0C, size: 4, name: "类型", kind: "enum", enum: "任务类型", hint: "1狩猎 2讨伐" },
+  { off: 0x10, size: 4, name: "未知10", kind: "num", hint: "固定300" },
+  { off: 0x14, size: 4, name: "锁定", kind: "enum", enum: "锁定" },
+  { off: 0x18, size: 4, name: "目标数量", kind: "num", hint: "1~5" },
+  { off: 0x1C, size: 4, name: "怪1ID", kind: "mon", slot: 1, linked: "怪1级" },
+  { off: 0x20, size: 4, name: "怪2ID", kind: "mon", slot: 2, linked: "怪2级" },
+  { off: 0x24, size: 4, name: "怪3ID", kind: "mon", slot: 3, linked: "怪3级" },
+  { off: 0x28, size: 4, name: "怪4ID", kind: "mon", slot: 4, linked: "怪4级" },
+  { off: 0x2C, size: 4, name: "怪5ID", kind: "mon", slot: 5, linked: "怪5级" },
+  { off: 0x30, size: 4, name: "乱入ID", kind: "mon", slot: 6, linked: "乱入级" },
+  { off: 0x34, size: 4, name: "未知34", kind: "num", hint: "无效" },
+  { off: 0x38, size: 4, name: "怪1级", kind: "num", hint: "怪物1时级别" },
+  { off: 0x3C, size: 4, name: "怪2级", kind: "num" },
+  { off: 0x40, size: 4, name: "怪3级", kind: "num" },
+  { off: 0x44, size: 4, name: "怪4级", kind: "num" },
+  { off: 0x48, size: 4, name: "怪5级", kind: "num" },
+  { off: 0x4C, size: 4, name: "乱入级", kind: "num" },
+  { off: 0x50, size: 4, name: "未知50", kind: "num", hint: "无效" },
+  { off: 0x54, size: 4, name: "地图", kind: "map" },
+  { off: 0x58, size: 4, name: "时间限制", kind: "enum", enum: "时间限制" },
+  { off: 0x5C, size: 4, name: "猫车", kind: "enum", enum: "猫车次数" },
+  { off: 0x60, size: 4, name: "人数", kind: "enum", enum: "参加人数" },
+  { off: 0x64, size: 4, name: "出发", kind: "enum", enum: "出发时间" },
+  { off: 0x68, size: 4, name: "叹号", kind: "enum", enum: "新任务叹号" },
+  { off: 0x6C, size: 4, name: "调整前级", kind: "num" },
+  { off: 0x70, size: 1, name: "超特通过", kind: "enum", enum: "超特通过状态" },
+  { off: 0x71, size: 1, name: "超特许可", kind: "enum", enum: "超特许可" },
+  { off: 0x72, size: 1, name: "超特叹号", kind: "enum", enum: "超特新叹号" },
+  { off: 0x73, size: 1, name: "未知73", kind: "num" }
+];
+
+// ---------- 结构参数 ----------
+var STRUCT = {
+  MAIN_PTR_OFFSET: 0x12A58748,  // NSO 里的主指针偏移
+  TASK_SIZE: 0x74,              // 每个任务 116 字节
+  TASK_COUNT: 200,
+  TASK_ID_BASE: 700000
+};
+</script>
+<!-- ===== bridge.js ===== -->
+<script>
+/* ============================================================
+ * bridge.js —— 与中转服务的通信层（唯一和后端打交道的地方）
+ * 中转只提供：GET /status、POST /cmd、POST /config
+ * ============================================================ */
+
+var Bridge = (function () {
+  // 中转地址
+  //  优先级：localStorage 手动设置 > 当前页面的 host > 默认 127.0.0.1
+  //  说明：网页就是中转自己发出来的（GET / 返回 index.html），
+  //        所以"哪个地址能打开网页，那个地址就能连中转" —— 直接用 location.host 最稳。
+  var DEFAULT = 'http://127.0.0.1:8080';
+  var base = localStorage.getItem('bridge') || null;
+
+  (function autoDetect() {
+    if (base) return;                 // 用户手动设置过，优先用
+    var h = location.hostname;
+    // 用当前页面的来源拼中转地址（端口固定 8080）
+    if (h && h !== 'localhost') {
+      base = 'http://' + h + ':8080';
+    } else {
+      base = DEFAULT;
+    }
+  })();
+
+  function url(path) {
+    return base.replace(/\/+$/, '') + path;
   }
+
+  /** 探活：返回 {ok, connected, ip, port} */
+  async function status() {
+    var r = await fetch(url('/status'));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  }
+
+  /** 发一条原始 sys-botbase 命令，返回回复文本（已 trim） */
+  async function cmd(s) {
+    var r = await fetch(url('/cmd'), { method: 'POST', body: s });
+    var t = await r.text();
+    if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
+    return t.trim();
+  }
+
+  /** 修改 Switch 目标 */
+  async function setTarget(ip, port) {
+    var r = await fetch(url('/config'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ip: ip, port: port })
+    });
+    return await r.json();
+  }
+
+  function getBase() { return base; }
+  function setBase(v) { base = v; localStorage.setItem('bridge', v); }
+
+  return {
+    status: status,
+    cmd: cmd,
+    setTarget: setTarget,
+    getBase: getBase,
+    setBase: setBase
+  };
 })();
+</script>
+<!-- ===== memory.js ===== -->
+<script>
+/* ============================================================
+ * memory.js —— 内存底层操作（把 sys-botbase 命令封装成好用的函数）
+ *
+ * ⚠️ 三个必须处理的坑：
+ *   1) sys-botbase 返回的 hex 是"高字节在前"，要用时需两两一组反转
+ *   2) peek 的参数是"相对 heap 的偏移"，不能直接给绝对地址
+ *   3) poke 的数据必须带 0x 前缀，否则会被当十进制解析（写坏数据！）
+ * ============================================================ */
 
-const $ = id => document.getElementById(id);
+var Mem = (function () {
+  var heapBase = null;
+  var mainBase = null;
 
-function setStatus(text, cls){
-  const el = $('status');
-  el.textContent = text;
-  el.className = 'status' + (cls ? ' ' + cls : '');
+  // ---------- 基础工具 ----------
+
+  /** hex 字符串 -> Uint8Array（按 sys-botbase 输出顺序，即高字节在前） */
+  function hexToBytes(hex) {
+    hex = (hex || '').replace(/\s/g, '');
+    var out = new Uint8Array(hex.length / 2);
+    for (var i = 0; i < out.length; i++) {
+      out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return out;
+  }
+
+  /** Uint8Array -> hex 字符串（大写） */
+  function bytesToHex(arr) {
+    var s = '';
+    for (var i = 0; i < arr.length; i++) {
+      s += (arr[i] < 16 ? '0' : '') + arr[i].toString(16).toUpperCase();
+    }
+    return s;
+  }
+
+  /**
+   * 把 sys-botbase 返回的字节数组按"小端 64 位"解析成整数。
+   * sys-botbase 返回的顺序是反的，例如 70F6C2D227000000 -> 0x27D2C2F670
+   */
+  function u64(bytes) {
+    // bytes 高字节在前 => 反转成低字节在前（little endian）
+    var v = 0n;
+    for (var i = 0; i < 8; i++) {
+      v |= BigInt(bytes[i]) << BigInt(8 * i);
+    }
+    return Number(v & 0xFFFFFFFFFFFFFn); // 48 位足够（Switch 地址）
+  }
+
+  /** 取 Uint8Array 里第 off 起的 little-endian uint32 */
+  function u32(b, off) {
+    return (b[off] | (b[off + 1] << 8) | (b[off + 2] << 16) | (b[off + 3] << 24)) >>> 0;
+  }
+
+  /** 把 uint32 写进 Uint8Array 的 off 处（little-endian） */
+  function putU32(b, off, val) {
+    b[off] = val & 0xFF;
+    b[off + 1] = (val >>> 8) & 0xFF;
+    b[off + 2] = (val >>> 16) & 0xFF;
+    b[off + 3] = (val >>> 24) & 0xFF;
+  }
+
+  // ---------- 基址 ----------
+
+  async function getHeapBase() {
+    if (heapBase === null) {
+      heapBase = parseInt(await Bridge.cmd('getHeapBase'), 16);
+    }
+    return heapBase;
+  }
+  async function getMainBase() {
+    if (mainBase === null) {
+      mainBase = parseInt(await Bridge.cmd('getMainNsoBase'), 16);
+    }
+    return mainBase;
+  }
+  function resetCache() { heapBase = null; mainBase = null; }
+
+  // ---------- 读写 ----------
+
+  /** 相对 heap 读 n 字节 -> Uint8Array */
+  async function peekHeap(off, n) {
+    var r = await Bridge.cmd('peek 0x' + off.toString(16).toUpperCase() + ' ' + n);
+    return hexToBytes(r);
+  }
+
+  /** 相对 NSO 读 n 字节 -> Uint8Array */
+  async function peekMain(off, n) {
+    var r = await Bridge.cmd('peekMain 0x' + off.toString(16).toUpperCase() + ' ' + n);
+    return hexToBytes(r);
+  }
+
+  /** 按绝对地址读（自动判断 heap / NSO） */
+  async function readAbs(addr, n) {
+    var hb = await getHeapBase();
+    if (hb && addr >= hb && addr < hb + 0x40000000) {
+      return await peekHeap(addr - hb, n);
+    }
+    return await peekMain(addr, n);
+  }
+
+  /** 按绝对地址写（data 是 Uint8Array）——自动补 0x 前缀！ */
+  async function writeAbs(addr, data) {
+    var hb = await getHeapBase();
+    var hexs = '0x' + bytesToHex(data);  // ⚠️ 必须带 0x！
+    if (hb && addr >= hb && addr < hb + 0x40000000) {
+      await Bridge.cmd('poke 0x' + (addr - hb).toString(16).toUpperCase() + ' ' + hexs);
+    } else {
+      await Bridge.cmd('pokeMain 0x' + addr.toString(16).toUpperCase() + ' ' + hexs);
+    }
+  }
+
+  // ---------- 大块读 / 写（提速核心）----------
+  // sys-botbase 的 peek/poke 支持一次读/写很长（上限由 MAX_LINE_LENGTH=22016 决定）：
+  //   · 读：一次最多输出 MAX_LINE_LENGTH 字节（hex 是 2 倍，但输出不受行限制）
+  //   · 写：命令是 "poke <off> <hex>"，hex 占 2 字符/字节，所以单次数据 ≤ ~11000 字节
+  // 自动按安全分块大小切分，把 200 次请求降到 1~3 次。
+  var READ_CHUNK = 20000;    // 单次读字节数（< 22016 留余量）
+  var WRITE_CHUNK = 8000;    // 单次写字节数（hex 16000 字符 < 22016 留余量）
+
+  /** 大块读：从绝对地址 addr 读 n 字节（自动按 READ_CHUNK 分块），返回 Uint8Array */
+  async function readRange(addr, n) {
+    var hb = await getHeapBase();
+    var out = new Uint8Array(n);
+    var got = 0;
+    while (got < n) {
+      var thisLen = Math.min(READ_CHUNK, n - got);
+      var a = addr + got;
+      var piece;
+      if (hb && a >= hb && a < hb + 0x40000000) {
+        piece = await peekHeap(a - hb, thisLen);
+      } else {
+        piece = await peekMain(a, thisLen);
+      }
+      if (!piece || piece.length === 0) break;
+      out.set(piece.subarray(0, Math.min(piece.length, n - got)), got);
+      if (piece.length < thisLen) break;   // 读不满，结束
+      got += thisLen;
+    }
+    return out;
+  }
+
+  /** 大块写：把 data 写到绝对地址 addr（自动按 WRITE_CHUNK 分块） */
+  async function writeRange(addr, data) {
+    var hb = await getHeapBase();
+    var total = data.length;
+    var done = 0;
+    while (done < total) {
+      var thisLen = Math.min(WRITE_CHUNK, total - done);
+      var a = addr + done;
+      var part = data.subarray(done, done + thisLen);
+      var hexs = '0x' + bytesToHex(part);
+      if (hb && a >= hb && a < hb + 0x40000000) {
+        await Bridge.cmd('poke 0x' + (a - hb).toString(16).toUpperCase() + ' ' + hexs);
+      } else {
+        await Bridge.cmd('pokeMain 0x' + a.toString(16).toUpperCase() + ' ' + hexs);
+      }
+      done += thisLen;
+    }
+    return true;
+  }
+
+  return {
+    hexToBytes: hexToBytes,
+    bytesToHex: bytesToHex,
+    u64: u64,
+    u32: u32,
+    putU32: putU32,
+    getHeapBase: getHeapBase,
+    getMainBase: getMainBase,
+    resetCache: resetCache,
+    peekHeap: peekHeap,
+    peekMain: peekMain,
+    readAbs: readAbs,
+    writeAbs: writeAbs,
+    readRange: readRange,
+    writeRange: writeRange
+  };
+})();
+</script>
+<!-- ===== quest.js ===== -->
+<script>
+/* ============================================================
+ * quest.js —— 怪异任务业务逻辑（指针链定位 + 任务解析 + 读写）
+ * 依赖：data.js（FIELDS / MONSTERS / MAPS / STRUCT）、memory.js（Mem）
+ * ============================================================ */
+
+var Quest = (function () {
+
+  // ---------- 指针链（ASLR 安全）----------
+  // p1 = *(main + 0x12A58748)
+  // p2 = *(p1 + 0x100)
+  // p3 = *(p2 + 0x28)
+  // base = p3 + 0x20
+  async function questBase() {
+    var p1 = Mem.u64(await Mem.peekMain(STRUCT.MAIN_PTR_OFFSET, 8));
+    var p2 = Mem.u64(await Mem.readAbs(p1 + 0x100, 8));
+    var p3 = Mem.u64(await Mem.readAbs(p2 + 0x28, 8));
+    return p3 + 0x20;
+  }
+
+  /** 解析 116 字节 -> 对象 */
+  function parseQuest(raw, index, addr) {
+    var t = { index: index, addr: addr.toString(16).toUpperCase().padStart(16, '0') };
+    for (var i = 0; i < FIELDS.length; i++) {
+      var f = FIELDS[i];
+      t[f.name] = (f.size === 4) ? Mem.u32(raw, f.off) : raw[f.off];
+    }
+    return t;
+  }
+
+  /** 读单个任务 */
+  async function getQuest(base, index) {
+    var addr = base + index * STRUCT.TASK_SIZE;
+    var raw = await Mem.readAbs(addr, STRUCT.TASK_SIZE);
+    if (!raw || raw.length < STRUCT.TASK_SIZE) return null;
+    return parseQuest(raw, index, addr);
+  }
+
+  /** 读全部任务（一次大块读，本地切片解析） */
+  async function getAllQuests(onProgress) {
+    var base = await questBase();
+    if (!base) throw new Error('定位任务数组失败（游戏没开？）');
+    var total = STRUCT.TASK_COUNT * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(base, total);   // ⚡ 一次读完 200 槽
+    var out = [];
+    for (var i = 0; i < STRUCT.TASK_COUNT; i++) {
+      var off = i * STRUCT.TASK_SIZE;
+      var raw = buf.subarray(off, off + STRUCT.TASK_SIZE);
+      var t = parseQuest(raw, i, base + off);
+      if (t['编号'] >= STRUCT.TASK_ID_BASE &&
+          t['编号'] <= STRUCT.TASK_ID_BASE + STRUCT.TASK_COUNT) {
+        out.push(t);
+      }
+    }
+    if (onProgress) onProgress(STRUCT.TASK_COUNT, STRUCT.TASK_COUNT);
+    return out;
+  }
+
+  /**
+   * 写单个任务的多个字段（一次读→改→写→回读）
+   * changes = [{off, size, value}, ...]
+   * 返回 {ok, got}
+   */
+  async function setQuestFields(base, index, changes) {
+    var addr = base + index * STRUCT.TASK_SIZE;
+    var raw = await Mem.readAbs(addr, STRUCT.TASK_SIZE);
+    if (!raw || raw.length < STRUCT.TASK_SIZE) return { ok: false, got: null };
+
+    var buf = new Uint8Array(raw);  // 复制
+    var want = [];
+    for (var i = 0; i < changes.length; i++) {
+      var c = changes[i];
+      if (c.size === 4) Mem.putU32(buf, c.off, c.value);
+      else buf[c.off] = c.value & 0xFF;
+      want.push(c);
+    }
+    await Mem.writeAbs(addr, buf);
+
+    // 回读校验
+    var chk = await Mem.readAbs(addr, STRUCT.TASK_SIZE);
+    if (!chk || chk.length < STRUCT.TASK_SIZE) return { ok: false, got: null };
+    var allok = true;
+    for (var j = 0; j < want.length; j++) {
+      var c2 = want[j];
+      var g = (c2.size === 4) ? Mem.u32(chk, c2.off) : chk[c2.off];
+      if (g !== c2.value) allok = false;
+    }
+    return { ok: allok, got: true };
+  }
+
+  /** 批量：对若干索引统一写一个字段（一次大块读 + 本地改 + 大块写回） */
+  async function setManyQuests(base, idxs, off, size, value, onProgress) {
+    if (!idxs.length) return 0;
+    var minI = Math.min.apply(null, idxs);
+    var maxI = Math.max.apply(null, idxs);
+    var startAddr = base + minI * STRUCT.TASK_SIZE;
+    var span = (maxI - minI + 1) * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(startAddr, span);   // ⚡ 一次读
+    var hit = {};
+    for (var k = 0; k < idxs.length; k++) hit[idxs[k]] = true;
+    for (var i = 0; i < idxs.length; i++) {
+      var local = (idxs[i] - minI) * STRUCT.TASK_SIZE;   // 在 buf 里的偏移
+      if (size === 4) Mem.putU32(buf, local + off, value);
+      else buf[local + off] = value & 0xFF;
+    }
+    await Mem.writeRange(startAddr, buf);   // ⚡ 大块写回
+    if (onProgress) onProgress(idxs.length, idxs.length);
+    return idxs.length;
+  }
+
+  /** 批量：每个索引写不同的值（累加用）——一次大块读 + 本地改 + 大块写回
+   *  vals = { index: value }
+   */
+  async function setManyQuestsDiff(base, indexList, off, size, values, onProgress) {
+    if (!indexList.length) return 0;
+    var minI = Math.min.apply(null, indexList);
+    var maxI = Math.max.apply(null, indexList);
+    var startAddr = base + minI * STRUCT.TASK_SIZE;
+    var span = (maxI - minI + 1) * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(startAddr, span);   // ⚡ 一次读
+    for (var i = 0; i < indexList.length; i++) {
+      var ix = indexList[i];
+      var local = (ix - minI) * STRUCT.TASK_SIZE;
+      var v = values[ix];
+      if (size === 4) Mem.putU32(buf, local + off, v);
+      else buf[local + off] = v & 0xFF;
+    }
+    await Mem.writeRange(startAddr, buf);   // ⚡ 大块写回
+    if (onProgress) onProgress(indexList.length, indexList.length);
+    return indexList.length;
+  }
+
+  /** 读全部 200 个槽的"原始 116 字节"（含空槽，用于导出）
+   *  返回 [{index, addr, raw(hex), ok}]  —— 一次大块读
+   */
+  async function getAllRaw(onProgress) {
+    var base = await questBase();
+    if (!base) throw new Error('定位任务数组失败（游戏没开？）');
+    var total = STRUCT.TASK_COUNT * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(base, total);   // ⚡ 一次读完 200 槽
+    var out = [];
+    for (var i = 0; i < STRUCT.TASK_COUNT; i++) {
+      var off = i * STRUCT.TASK_SIZE;
+      var raw = buf.subarray(off, off + STRUCT.TASK_SIZE);
+      out.push({
+        index: i,
+        addr: (base + off).toString(16).toUpperCase(),
+        raw: Mem.bytesToHex(raw),
+        ok: raw && raw.length === STRUCT.TASK_SIZE
+      });
+    }
+    if (onProgress) onProgress(STRUCT.TASK_COUNT, STRUCT.TASK_COUNT);
+    return out;
+  }
+
+  /** 写回整块 116 字节（十六进制字符串） */
+  async function writeRaw(base, index, hex) {
+    var addr = base + index * STRUCT.TASK_SIZE;
+    await Mem.writeAbs(addr, Mem.hexToBytes(hex));
+    return true;
+  }
+
+  /** 整批写回：把 200 个槽的数据一次大块写（用于"上传到游戏"提速）
+   *  slots = [{index, raw(hex)}]（需覆盖 [0..TASK_COUNT)，缺失的槽跳过）
+   */
+  async function writeAllRaw(slots, onProgress) {
+    var base = await questBase();
+    if (!base) throw new Error('定位任务数组失败（游戏没开？）');
+    // 拼成连续 buffer：按 index 填入，缺失的槽保留"空槽标准长相"
+    var total = STRUCT.TASK_COUNT * STRUCT.TASK_SIZE;
+    var buf = new Uint8Array(total);
+    var have = {};   // index -> true
+    for (var i = 0; i < slots.length; i++) {
+      var s = slots[i];
+      if (s.index < 0 || s.index >= STRUCT.TASK_COUNT) continue;
+      var bytes = Mem.hexToBytes(s.raw);
+      var off = s.index * STRUCT.TASK_SIZE;
+      buf.set(bytes.subarray(0, STRUCT.TASK_SIZE), off);
+      have[s.index] = true;
+    }
+    // 没填的槽 → 空槽标准长相（序号/编号=FFFFFFFF，叹号=256），避免误写成 0
+    for (var k = 0; k < STRUCT.TASK_COUNT; k++) {
+      if (have[k]) continue;
+      var off2 = k * STRUCT.TASK_SIZE;
+      Mem.putU32(buf, off2 + 0x00, 0xFFFFFFFF);
+      Mem.putU32(buf, off2 + 0x04, 0xFFFFFFFF);
+      Mem.putU32(buf, off2 + 0x68, 256);
+    }
+    await Mem.writeRange(base, buf);   // ⚡ 大块写
+    if (onProgress) onProgress(STRUCT.TASK_COUNT, STRUCT.TASK_COUNT);
+    return STRUCT.TASK_COUNT;
+  }
+
+  // ---------- 展示辅助 ----------
+  function monName(id) {
+    if (!id) return '无';
+    return MONSTERS[id] || ('未知(0x' + Number(id).toString(16).toUpperCase() + ')');
+  }
+  function mapName(id) {
+    if (!id) return '—';
+    return MAPS[id] || ('地图' + id);
+  }
+  function enumName(enumKey, v) {
+    var en = ENUMS[enumKey] || {};
+    return en[String(v)] || '';
+  }
+  function fieldByName(name) {
+    for (var i = 0; i < FIELDS.length; i++) if (FIELDS[i].name === name) return FIELDS[i];
+    return null;
+  }
+
+  /** 构造任务的"怪物列表"（用于列表显示） */
+  function monsterList(t) {
+    var arr = [];
+    var keys = ['怪1ID', '怪2ID', '怪3ID', '怪4ID', '怪5ID'];
+    for (var i = 0; i < keys.length; i++) {
+      var mid = t[keys[i]];
+      if (mid) arr.push({ id: mid, name: monName(mid), lv: t['怪' + (i + 1) + '级'] });
+    }
+    if (t['乱入ID']) arr.push({ id: t['乱入ID'], name: '乱入:' + monName(t['乱入ID']), lv: t['乱入级'] });
+    return arr;
+  }
+
+  return {
+    questBase: questBase,
+    getQuest: getQuest,
+    getAllQuests: getAllQuests,
+    setQuestFields: setQuestFields,
+    setManyQuests: setManyQuests,
+    setManyQuestsDiff: setManyQuestsDiff,
+    getAllRaw: getAllRaw,
+    writeRaw: writeRaw,
+    writeAllRaw: writeAllRaw,
+    parseQuest: parseQuest,
+    monName: monName,
+    mapName: mapName,
+    enumName: enumName,
+    fieldByName: fieldByName,
+    monsterList: monsterList
+  };
+})();
+</script>
+<!-- ===== store.js ===== -->
+<script>
+/* ============================================================
+ * store.js —— 数据源层（在线内存 / 离线文件）
+ *
+ * 只有两种数据源，二选一：
+ *   1) 在线：从 Switch 内存读（Store.loadFromSwitch）
+ *   2) 离线：从"打开的文件"载入（Store.loadFile）
+ *
+ * 上层界面（app.js）只跟 Store 打交道。
+ * 数据结构：slots = [{ index, raw(hex, 232字符), fields(对象) }]
+ * ============================================================ */
+
+var Store = (function () {
+
+  var slots = [];       // 200 槽：[{index, raw, fields}]
+  var mode = 'none';    // 'online' | 'file' | 'none'
+  var sourceInfo = '';  // 数据来源描述
+
+  // ---------- 原始 hex ↔ fields ----------
+  function rawToFields(rawHex) {
+    var bytes = Mem.hexToBytes(rawHex);
+    var o = {};
+    for (var i = 0; i < FIELDS.length; i++) {
+      var f = FIELDS[i];
+      o[f.name] = (f.size === 4) ? Mem.u32(bytes, f.off) : bytes[f.off];
+    }
+    return o;
+  }
+
+  function isValid(fields) {
+    var n = fields['编号'];
+    return n >= STRUCT.TASK_ID_BASE && n <= STRUCT.TASK_ID_BASE + STRUCT.TASK_COUNT;
+  }
+
+  /** 本地修改某个槽（离线编辑 / 在线改后同步） */
+  function setSlot(index, rawHex) {
+    for (var i = 0; i < slots.length; i++) {
+      if (slots[i].index === index) {
+        slots[i].raw = rawHex;
+        slots[i].fields = rawToFields(rawHex);
+        return true;
+      }
+    }
+    slots.push({ index: index, raw: rawHex, fields: rawToFields(rawHex) });
+    slots.sort(function (a, b) { return a.index - b.index; });
+    return true;
+  }
+
+  /** 本地按字段改某个槽（离线编辑核心） */
+  function setSlotFields(index, changes) {
+    var slot = null;
+    for (var i = 0; i < slots.length; i++) if (slots[i].index === index) { slot = slots[i]; break; }
+    if (!slot) return false;
+    var bytes = Mem.hexToBytes(slot.raw);
+    for (var j = 0; j < changes.length; j++) {
+      var c = changes[j];
+      if (c.size === 4) Mem.putU32(bytes, c.off, c.value);
+      else bytes[c.off] = c.value & 0xFF;
+    }
+    slot.raw = Mem.bytesToHex(bytes);
+    slot.fields = rawToFields(slot.raw);
+    return true;
+  }
+
+  function getSlot(index) {
+    for (var i = 0; i < slots.length; i++) if (slots[i].index === index) return slots[i];
+    return null;
+  }
+
+  // ---------- 数据源 1：Switch 内存 ----------
+  async function loadFromSwitch(onProgress) {
+    var raw = await Quest.getAllRaw(onProgress);
+    slots = raw.map(function (s) {
+      return { index: s.index, raw: s.raw, fields: rawToFields(s.raw) };
+    });
+    mode = 'online';
+    sourceInfo = 'Switch 内存';
+    return slots;
+  }
+
+  // ---------- 数据源 2：打开的文件 ----------
+  function loadFile(d, fname) {
+    if (!d || !d.quests || !d.quests.length) return false;
+    slots = d.quests.map(function (item) {
+      return {
+        index: item.index,
+        raw: item.raw,
+        fields: item.fields || rawToFields(item.raw)
+      };
+    });
+    // 补齐：如果文件里只有部分槽，其余槽补空（全 0）
+    var have = {};
+    for (var i = 0; i < slots.length; i++) have[slots[i].index] = true;
+    for (var s = 0; s < STRUCT.TASK_COUNT; s++) {
+      if (!have[s]) slots.push({ index: s, raw: emptyRaw(), fields: rawToFields(emptyRaw()) });
+    }
+    slots.sort(function (a, b) { return a.index - b.index; });
+    mode = 'file';
+    sourceInfo = fname ? ('文件：' + fname) : '打开的文件';
+    return true;
+  }
+
+  /** 一个"空槽"的 116 字节：编号/序号=FFFFFFFF, 叹号=256 */
+  function emptyRaw() {
+    var b = new Uint8Array(STRUCT.TASK_SIZE);
+    Mem.putU32(b, 0x00, 0xFFFFFFFF);
+    Mem.putU32(b, 0x04, 0xFFFFFFFF);
+    Mem.putU32(b, 0x68, 256);
+    return Mem.bytesToHex(b);
+  }
+
+  /** 导出成 JSON 对象 */
+  function toExport() {
+    return {
+      app: '怪异任务编辑器',
+      version: 1,
+      game: 'MONSTER HUNTER RISE 16.0.2',
+      taskSize: STRUCT.TASK_SIZE,
+      taskCount: STRUCT.TASK_COUNT,
+      exportedAt: new Date().toISOString(),
+      quests: slots.map(function (s) {
+        return {
+          index: s.index,
+          raw: s.raw,
+          fields: s.fields,
+          empty: !isValid(s.fields)
+        };
+      })
+    };
+  }
+
+  /** 取"有效任务"列表（给界面用，等价于旧的 ALL） */
+  function validTasks() {
+    var out = [];
+    for (var i = 0; i < slots.length; i++) {
+      if (isValid(slots[i].fields)) {
+        var t = {};
+        for (var k in slots[i].fields) t[k] = slots[i].fields[k];
+        t.index = slots[i].index;
+        t.addr = (slots[i].index * STRUCT.TASK_SIZE).toString(16).toUpperCase();
+        out.push(t);
+      }
+    }
+    return out;
+  }
+
+  /** 全部空槽索引 */
+  function emptySlots() {
+    var out = [];
+    for (var i = 0; i < slots.length; i++) {
+      if (!isValid(slots[i].fields)) out.push(slots[i].index);
+    }
+    return out;
+  }
+
+  function getSlots() { return slots; }
+  function getMode() { return mode; }
+  function getSource() { return sourceInfo; }
+  function clear() { slots = []; mode = 'none'; sourceInfo = ''; }
+
+  return {
+    rawToFields: rawToFields,
+    isValid: isValid,
+    setSlot: setSlot,
+    setSlotFields: setSlotFields,
+    getSlot: getSlot,
+    loadFromSwitch: loadFromSwitch,
+    loadFile: loadFile,
+    emptyRaw: emptyRaw,
+    toExport: toExport,
+    validTasks: validTasks,
+    emptySlots: emptySlots,
+    getSlots: getSlots,
+    getMode: getMode,
+    getSource: getSource,
+    clear: clear
+  };
+})();
+</script>
+<!-- ===== app.js ===== -->
+<script>
+/* ============================================================
+ * app.js —— 界面逻辑（渲染、编辑、选择器、批量）
+ * 依赖：data.js / bridge.js / memory.js / quest.js
+ * ============================================================ */
+
+var $ = function (id) { return document.getElementById(id); };
+var ALL = [];      // 已读取的任务
+var BASE = null;   // 任务数组基址（缓存）
+
+function toast(msg, ms) {
+  ms = ms || 2400;
+  var t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(t._h); t._h = setTimeout(function () { t.classList.remove('show'); }, ms);
+}
+function setDot(cls, text) { $('dot').className = 'dot ' + (cls || ''); $('stat').textContent = text; }
+
+/** 更新按钮进度文本 */
+function busy(btn, on, text) {
+  if (on) { btn.disabled = true; btn._t = btn.textContent; btn.textContent = text; }
+  else { btn.disabled = false; if (btn._t) btn.textContent = btn._t; }
 }
 
-async function cmd(text){
-  const base = $('bridge').value.replace(/\/+$/, '');
-  const r = await fetch(base + '/cmd', { method:'POST', body:text });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  return (await r.text()).trim();
-}
+// ---------- 加载 ----------
 
-async function refresh(){
-  const btn = $('btn');
-  btn.disabled = true;
-  setStatus('读取中…');
-  try {
-    // 1) 先探活
-    const base = $('bridge').value.replace(/\/+$/, '');
-    const st = await (await fetch(base + '/status')).json();
-    if (!st.connected) { setStatus('中转在，但连不上 Switch', 'err'); return; }
+var _busy = false;   // 全局忙碌锁：读取/写入期间禁止重复操作
 
-    // 2) 读电量
-    const raw = await cmd('charge');
-    const n = parseInt(raw, 10);
-    if (isNaN(n)) { setStatus('返回异常: ' + raw, 'err'); return; }
-
-    $('val').textContent = n;
-    $('bar').style.width = Math.max(0, Math.min(100, n)) + '%';
-    setStatus(`已连接 ${st.ip}:${st.port} · 正常`, 'ok');
-  } catch (e) {
-    setStatus('失败: ' + e.message + '（检查中转是否在跑）', 'err');
-  } finally {
-    btn.disabled = false;
+/** 禁用/启用一组按钮 */
+function setBusy(on) {
+  _busy = on;
+  var ids = ['reload', 'addBtn', 'batch', 'exportBtn', 'openBtn', 'writeBackBtn', 'cfgBtn'];
+  for (var i = 0; i < ids.length; i++) {
+    var b = $(ids[i]);
+    if (b) b.disabled = on;
   }
 }
 
-$('btn').addEventListener('click', refresh);
-// 打开自动读一次
-refresh();
-// 每 30 秒自动刷新
-setInterval(refresh, 30000);
+/** 在线加载：从 Switch 读 200 槽 */
+async function load() {
+  if (_busy) return;          // ← 防止重复点击
+  setBusy(true);
+  setDot('', '读取中…');
+  $('loading').style.display = 'none';
+  $('list').innerHTML = '';
+  var pb = $('progressbar');
+  pb.classList.add('show');
+  pb.querySelector('.pbar-txt').textContent = '定位任务数组…';
+  pb.querySelector('.pbar-fill').style.width = '0%';
+  try {
+    var st = await Bridge.status();
+    if (!st.connected) { setDot('err', 'Switch 未连接'); }
+    Mem.resetCache();
+
+    await Store.loadFromSwitch(function (cur, total) {
+      var pct = Math.round(cur / total * 100);
+      pb.querySelector('.pbar-txt').textContent = '读取中 ' + cur + '/' + total +
+        '（' + pct + '%，约剩 ' + Math.round((total - cur) * 0.11) + ' 秒）';
+      pb.querySelector('.pbar-fill').style.width = pct + '%';
+    });
+    BASE = await Quest.questBase();
+    ALL = Store.validTasks();
+    setDot('ok', ALL.length + ' 个任务 · ' + st.ip + ':' + st.port);
+    pb.classList.remove('show');
+    updateModeTag();
+    render();
+  } catch (e) {
+    pb.classList.remove('show');
+    setDot('err', '未连接中转');
+    $('loading').style.display = 'block';
+    $('loading').innerHTML = '❌ 连不上中转<br><br>' +
+      '当前地址：<b>' + Bridge.getBase() + '</b><br>' +
+      '错误：' + e.message + '<br><br>' +
+      '<button onclick="cfgAddr()">⚙️ 修改中转地址</button><br><br>' +
+      '👉 或者点「📥 打开文件」，离线编辑任务文件（不需要 NS）';
+  } finally {
+    setBusy(false);           // ← 无论如何都解锁
+  }
+}
+
+/** 从"数据源"刷新界面（不读内存）——用于文件模式 */
+function refreshFromStore() {
+  ALL = Store.validTasks();
+  if (Store.getMode() === 'online') {
+    // 在线模式基址已存在
+  } else {
+    BASE = null;   // 文件模式没有真实基址
+  }
+  updateModeTag();
+  render();
+}
+
+/** 顶部状态：在线/文件 */
+function updateModeTag() {
+  var el = $('modeTag');
+  if (!el) return;
+  if (Store.getMode() === 'file') {
+    el.textContent = '📄 文件编辑模式';
+    el.style.color = '#d29922';
+    el.title = Store.getSource();
+  } else if (Store.getMode() === 'online') {
+    el.textContent = '';
+    el.style.color = '';
+  } else {
+    el.textContent = '';
+  }
+}
+
+/** 打开一个导出的 JSON 文件（离线编辑） */
+function openDataFile() {
+  var inp = $('importFile');
+  inp.value = '';
+  inp.onchange = function () {
+    var f = inp.files && inp.files[0];
+    if (!f) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var d;
+      try { d = JSON.parse(reader.result); }
+      catch (e) { toast('❌ 不是有效的 JSON：' + e.message, 5000); return; }
+      if (!Store.loadFile(d, f.name)) { toast('❌ 文件里没有任务数据', 4500); return; }
+      refreshFromStore();
+      var st = Store.getSlots();
+      toast('📄 已打开文件：' + f.name + '（' + ALL.length + ' 个任务）', 3500);
+    };
+    reader.onerror = function () { toast('❌ 读取文件失败', 4000); };
+    reader.readAsText(f);
+  };
+  inp.click();
+}
+
+// ---------- 列表渲染 ----------
+
+function typeLabel(t) {
+  var n = Quest.enumName('任务类型', t);
+  if (t === 1) return '<span class="ty hunt">' + (n || '狩猎') + '</span>';
+  if (t === 2) return '<span class="ty slay">' + (n || '讨伐') + '</span>';
+  return '<span class="ty other">' + t + '</span>';
+}
+
+// 列表里的怪物标签
+//  - 第一个怪：突出（.primary）
+//  - 目标数量决定"主要怪"个数，其余主要怪稍微突出（.secondary）
+//  - 乱入怪：.inv
+//  - 列表不显示怪物级别
+function monChip(m) {
+  var extra = '';
+  if (m.name.indexOf('乱入') === 0) extra = 'inv';
+  else if (m.pos === 0) extra = 'primary';
+  else if (m.pos > 0 && m.pos < m.target) extra = 'secondary';
+  return '<span class="mon ' + extra + '">' + m.name + '</span>';
+}
+
+function render() {
+  var kw = $('search').value.trim().toLowerCase();
+  var arr = ALL.slice();
+  if (kw) {
+    arr = arr.filter(function (q) {
+      var hay = [String(q['编号']), Quest.mapName(q['地图'])]
+        .concat(Quest.monsterList(q).map(function (m) { return m.name; }))
+        .join(' ').toLowerCase();
+      return hay.indexOf(kw) >= 0;
+    });
+  }
+  var parts = $('sort').value.split('-');
+  var dir = parts[1] === 'desc' ? -1 : 1;
+  var field = parts[0];
+  arr.sort(function (a, b) { return (a[field] - b[field]) * dir; });
+
+  $('list').innerHTML = arr.map(function (q) {
+    var tags = [];
+    if (q['锁定']) tags.push('<span class="tag lock">🔒锁定</span>');
+    if (q['叹号']) tags.push('<span class="tag new">❗新</span>');
+    if (q['超特通过']) tags.push('<span class="tag spc">✔超特通关</span>');
+    if (q['超特许可']) tags.push('<span class="tag sp">✦超特许可</span>');
+    if (q['超特叹号']) tags.push('<span class="tag sp">✦超特新</span>');
+
+    // 怪物列表（带位置/目标数量，供突出用）
+    var mons = Quest.monsterList(q).map(function (m) { return m; });
+    var target = q['目标数量'] || 1;
+    mons.forEach(function (m, i) { m.pos = i; m.target = target; });
+    var monsHtml = mons.map(monChip).join('') || '<span class="mon">无怪</span>';
+
+    // 怪异等级 = 怪物1级 + 1
+    var weird = (q['怪1级'] || 0) + 1;
+
+    return '<div class="q" data-idx="' + q.index + '">' +
+      '<button class="del" data-del="' + q.index + '" title="删除此任务">🗑️</button>' +
+      '<div class="top"><span class="no">#' + q['编号'] + '</span>' +
+      '<span class="idx">序号 ' + q['序号'] + ' · 内存#' + q.index + '</span>' +
+      '<span class="lv">怪异 ' + weird + '★</span></div>' +
+      '<div class="map">🗺️ ' + Quest.mapName(q['地图']) + ' · Lv' + q['等级'] +
+        ' · ' + q['时间限制'] + '分 · 猫车' + q['猫车'] + ' · ' + q['人数'] + '人</div>' +
+      '<div class="mons">' + monsHtml + '</div>' +
+      (tags.length ? '<div class="tags">' + tags.join('') + '</div>' : '') +
+      '</div>';
+  }).join('') || '<div class="loading">没有匹配的任务</div>';
+}
+
+// ---------- 单任务编辑 ----------
+
+var _curIdx = null;
+
+async function openQuest(idx) {
+  var q;
+  try {
+    if (Store.getMode() === 'file') {
+      // 文件模式：从本地数据取
+      var slot = Store.getSlot(idx);
+      if (!slot) { toast('该槽不存在'); return; }
+      q = Store.rawToFields(slot.raw);
+      q.index = idx;
+      q.addr = (idx * STRUCT.TASK_SIZE).toString(16).toUpperCase();
+    } else {
+      if (!BASE) BASE = await Quest.questBase();
+      q = await Quest.getQuest(BASE, idx);
+    }
+  } catch (e) { toast('读取失败: ' + e.message); return; }
+  if (!q) { toast('任务不存在'); return; }
+  _curIdx = idx;
+
+  var rows = FIELDS.map(function (f) {
+    var v = q[f.name] !== undefined ? q[f.name] : 0;
+    var btn = '', nm = '';
+    if (f.kind === 'mon') {
+      btn = '<button class="pick" data-pick="mon" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="nm" id="nm-' + f.name + '">' + (v ? Quest.monName(v) : '') + '</span>';
+    } else if (f.kind === 'map') {
+      btn = '<button class="pick" data-pick="map" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="nm" id="nm-' + f.name + '">' + (v ? Quest.mapName(v) : '') + '</span>';
+    } else if (f.kind === 'enum') {
+      btn = '<button class="pick" data-pick="enum" data-enumkey="' + f.enum + '" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="hintv" id="nm-' + f.name + '">' + Quest.enumName(f.enum, v) + '</span>';
+    } else {
+      nm = '<span class="hintv" id="nm-' + f.name + '">' + (f.hint || '') + '</span>';
+    }
+    return '<div class="frow"><label>' + f.name + '</label>' +
+      '<input type="number" data-field="' + f.name + '" value="' + v + '" />' + btn + nm + '</div>';
+  }).join('');
+
+  $('sheet').innerHTML =
+    '<h2>任务 #' + q['编号'] + '</h2>' +
+    '<div class="sub">索引 ' + q.index + ' · 地址 ' + q.addr + '</div>' +
+    '<div class="sec">字段（均显示原始值，可直接改）</div>' + rows +
+    '<div class="hint">⚠️ 保存只写入<b>这一个任务</b>。<br>' +
+    '🐉 <b>点怪物的 📋 选择</b> → 自动把该怪等级填到对应「怪N级」（怪1用主等级，怪2~5/乱入用副等级）；<b>手动改 ID 不会</b>动等级。</div>' +
+    '<div style="margin-top:16px">' +
+    '<button id="save" style="width:100%">💾 保存此任务</button>' +
+    '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
+    '</div>';
+  $('overlay').classList.add('show');
+  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+  $('save').onclick = function () { saveOne(idx); };
+
+  // 选择按钮
+  $('sheet').querySelectorAll('[data-pick]').forEach(function (b) {
+    b.onclick = function () {
+      var field = b.dataset.field, kind = b.dataset.pick;
+      var f = Quest.fieldByName(field);
+      if (kind === 'enum') {
+        openEnumPicker(f.enum, function (val) {
+          var inp = $('sheet').querySelector('input[data-field="' + field + '"]');
+          if (inp) inp.value = val;
+          var nm = $('nm-' + field); if (nm) nm.textContent = Quest.enumName(f.enum, val);
+        });
+        return;
+      }
+      openPicker(kind, function (id) {
+        var inp = $('sheet').querySelector('input[data-field="' + field + '"]');
+        if (inp) inp.value = id;
+        var nm = $('nm-' + field);
+        if (nm) nm.textContent = (kind === 'mon') ? Quest.monName(id) : Quest.mapName(id);
+        // 【联动】选怪自动带等级
+        if (kind === 'mon' && id) {
+          var lv = MON_LEVELS[id];
+          if (f && f.linked && lv) {
+            var role = (f.slot === 1) ? 0 : 1;
+            var lvinp = $('sheet').querySelector('input[data-field="' + f.linked + '"]');
+            if (lvinp) lvinp.value = lv[role];
+          }
+        }
+      });
+    };
+  });
+  // 手改枚举提示
+  $('sheet').querySelectorAll('input[data-field]').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      var f = Quest.fieldByName(inp.dataset.field);
+      var nm = $('nm-' + inp.dataset.field);
+      if (!nm || !f || f.kind !== 'enum') return;
+      nm.textContent = Quest.enumName(f.enum, parseInt(inp.value, 10) || 0);
+    });
+  });
+}
+
+async function saveOne(idx) {
+  var inputs = [].slice.call($('sheet').querySelectorAll('input[data-field]'));
+  var changes = [];
+  inputs.forEach(function (el) {
+    var f = Quest.fieldByName(el.dataset.field); if (!f) return;
+    var val = parseInt(el.value, 10);
+    if (isNaN(val)) return;
+    changes.push({ off: f.off, size: f.size, value: val });
+  });
+  var btn = $('save');
+  busy(btn, true, '⏳ 保存中…（写入 ' + changes.length + ' 个字段）');
+  try {
+    if (Store.getMode() === 'file') {
+      // 离线文件模式：只改本地
+      Store.setSlotFields(idx, changes);
+      toast('✅ 已保存到文件（本地）', 2500);
+      busy(btn, false);
+      refreshFromStore();
+      openQuest(idx);
+      return;
+    }
+    // 在线模式：写内存
+    if (!BASE) BASE = await Quest.questBase();
+    var r = await Quest.setQuestFields(BASE, idx, changes);
+    if (r.ok) {
+      toast('✅ 已保存 ' + changes.length + ' 个字段（已回读校验）', 3000);
+      // 同步更新本地缓存
+      var slot = Store.getSlot(idx);
+      if (slot) { /* 下次 load 会重新读，无需手动同步 */ }
+    } else toast('⚠️ 写入后校验不一致，请检查', 4000);
+  } catch (e) {
+    toast('❌ 保存失败：' + e.message, 4000);
+  }
+  busy(btn, false);
+  if (Store.getMode() !== 'file') openQuest(idx);
+}
+
+// ---------- 批量改任务（主界面）----------
+
+/** 根据字段类型，生成"改成"这一行的控件 */
+function buildBatchValueRow(f, val) {
+  var extra = '';
+  if (f.kind === 'mon') {
+    extra = '<button class="pick" id="bPick">📋</button>' +
+      '<span class="nm" id="bValName">' + (val ? Quest.monName(val) : '') + '</span>';
+  } else if (f.kind === 'map') {
+    extra = '<button class="pick" id="bPick">📋</button>' +
+      '<span class="nm" id="bValName">' + (val ? Quest.mapName(val) : '') + '</span>';
+  } else if (f.kind === 'enum') {
+    extra = '<button class="pick" id="bPick">📋</button>' +
+      '<span class="hintv" id="bValName">' + Quest.enumName(f.enum, val) + '</span>';
+  } else {
+    extra = '<span class="hintv">' + (f.hint || '') + '</span>';
+  }
+  return '<div class="frow"><label>改成</label>' +
+    '<input type="number" id="bValue" value="' + val + '" />' + extra + '</div>';
+}
+
+/** 绑定"改成"行的选择器按钮 + 手改提示 */
+function bindBatchValueRow(f) {
+  var pick = $('bPick');
+  if (pick) {
+    pick.onclick = function () {
+      var cb = function (v) {
+        $('bValue').value = v;
+        var nm = $('bValName');
+        if (nm) nm.textContent = (f.kind === 'mon') ? Quest.monName(v)
+          : (f.kind === 'map') ? Quest.mapName(v) : Quest.enumName(f.enum, v);
+      };
+      if (f.kind === 'enum') openEnumPicker(f.enum, cb); else openPicker(f.kind, cb);
+    };
+  }
+  var inp = $('bValue');
+  inp.addEventListener('input', function () {
+    var nm = $('bValName');
+    if (!nm || f.kind !== 'enum') return;
+    nm.textContent = Quest.enumName(f.enum, parseInt(inp.value, 10) || 0);
+  });
+}
+
+/** 默认值：不同字段给个合理的初始值 */
+function batchDefaultValue(f) {
+  if (f.kind === 'enum') return parseInt(Object.keys(ENUMS[f.enum])[0], 10);
+  if (f.kind === 'mon') return 1;
+  if (f.kind === 'map') return 1;
+  return 300;
+}
+
+function openBatch() {
+  var fopt = FIELDS.map(function (f) {
+    return '<option value="' + f.name + '">' + f.name + '</option>';
+  }).join('');
+  $('sheet').innerHTML =
+    '<h2>⚡ 批量改任务</h2>' +
+    '<div class="sub">把很多个任务的「同一个字段」一次改成相同值</div>' +
+    '<div class="frow"><label>要改的字段</label><select id="bField" style="width:130px">' + fopt + '</select></div>' +
+    '<div id="bValWrap"></div>' +
+    '<div class="frow"><label>逐个累加</label>' +
+    '<input type="checkbox" id="bInc" style="width:auto;flex:none" />' +
+    '<span class="hintv">勾上后：第1个=改成值，之后每个 +1</span></div>' +
+    '<div class="frow"><label>范围</label><select id="bRange" style="width:150px">' +
+    '<option value="all">全部（' + ALL.length + ' 个）</option>' +
+    '<option value="ids">任务编号区间</option>' +
+    '</select></div>' +
+    '<div id="bIdRange" style="display:none">' +
+    '<div class="frow"><label>编号起</label><input type="number" id="bFrom" value="700000" /></div>' +
+    '<div class="frow"><label>编号止</label><input type="number" id="bTo" value="700199" /></div>' +
+    '</div>' +
+    '<div class="hint">⚠️ 会一次改多个任务，每个约 1.5 秒，请确认无误再点。</div>' +
+    '<div style="margin-top:16px">' +
+    '<button id="bGo" class="warn" style="width:100%">⚡ 开始批量修改</button>' +
+    '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
+    '</div>';
+  $('overlay').classList.add('show');
+  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+
+  // 切换字段 → 重建"改成"行
+  function rebuildValueRow() {
+    var f = Quest.fieldByName($('bField').value);
+    if (!f) return;
+    $('bValWrap').innerHTML = buildBatchValueRow(f, batchDefaultValue(f));
+    bindBatchValueRow(f);
+  }
+  rebuildValueRow();
+  $('bField').onchange = rebuildValueRow;
+
+  $('bRange').onchange = function () {
+    $('bIdRange').style.display = ($('bRange').value === 'ids') ? 'block' : 'none';
+  };
+  $('bGo').onclick = doBatch;
+}
+
+async function doBatch() {
+  if (_busy) return;
+  var f = Quest.fieldByName($('bField').value);
+  if (!f) { toast('字段无效'); return; }
+  var value = parseInt($('bValue').value, 10) || 0;
+  var inc = $('bInc').checked;   // 逐个累加
+  var idxs;
+  if ($('bRange').value === 'ids') {
+    var from = parseInt($('bFrom').value, 10), to = parseInt($('bTo').value, 10);
+    idxs = ALL.filter(function (q) { return q['编号'] >= from && q['编号'] <= to; })
+      .map(function (q) { return q.index; });
+    if (!idxs.length) { toast('没有匹配的任务'); return; }
+  } else {
+    idxs = ALL.map(function (q) { return q.index; });
+  }
+  // 按索引升序，累加才有稳定顺序
+  if (inc) idxs.sort(function (a, b) { return a - b; });
+
+  var tip = inc
+    ? '确定把 ' + idxs.length + ' 个任务的「' + f.name + '」从 ' + value + ' 开始逐个 +1 吗？\n约需 ' + Math.round(idxs.length * 1.6) + ' 秒。'
+    : '确定把 ' + idxs.length + ' 个任务的「' + f.name + '」改成 ' + value + ' 吗？\n约需 ' + Math.round(idxs.length * 1.6) + ' 秒。';
+  if (!confirm(tip)) return;
+
+  var btn = $('bGo');
+  busy(btn, true, '⏳ 修改中 0/' + idxs.length);
+  setBusy(true);
+  btn.disabled = true;
+  try {
+    if (!BASE) BASE = await Quest.questBase();
+    var ok = 0;
+    if (inc) {
+      // 逐个累加：构造每个索引对应的值，一次大块写
+      var vals = {};
+      for (var i = 0; i < idxs.length; i++) vals[idxs[i]] = value + i;
+      if (Store.getMode() === 'file') {
+        idxs.forEach(function (ix) {
+          Store.setSlotFields(ix, [{ off: f.off, size: f.size, value: vals[ix] }]);
+        });
+        ok = idxs.length;
+      } else {
+        ok = await Quest.setManyQuestsDiff(BASE, idxs, f.off, f.size, vals, function () {});
+      }
+    } else {
+      // 统一同值：一次大块写（快）
+      if (Store.getMode() === 'file') {
+        idxs.forEach(function (ix) {
+          Store.setSlotFields(ix, [{ off: f.off, size: f.size, value: value }]);
+        });
+        ok = idxs.length;
+      } else {
+        ok = await Quest.setManyQuests(BASE, idxs, f.off, f.size, value, function (c, t) {
+          btn.textContent = '⏳ 修改中 ' + c + '/' + t;
+        });
+      }
+    }
+    toast('✅ 批量完成：' + ok + '/' + idxs.length + ' 个成功', 3500);
+  } catch (e) {
+    toast('❌ 批量失败：' + e.message, 4000);
+  }
+  busy(btn, false);
+  setBusy(false);              // 先解锁，load() 里要检查 _busy
+  $('overlay').classList.remove('show');
+  // 文件模式不重新读内存，只刷新列表
+  if (Store.getMode() === 'file') { ALL = Store.validTasks(); render(); }
+  else load();   // 重新拉取
+}
+
+// ---------- 删除任务 ----------
+// 游戏"删除"的做法：把 序号(0x00)、编号(0x04) 写成 0xFFFFFFFF，叹号(0x68) 写成 256
+var DEL_MARK = 0xFFFFFFFF;
+
+async function delQuest(idx) {
+  var q = ALL.filter(function (x) { return x.index === idx; })[0];
+  var label = q ? ('#' + q['编号']) : ('索引 ' + idx);
+  if (!confirm('确定删除任务 ' + label + ' 吗？\n\n（写入：序号=FFFFFFFF、编号=FFFFFFFF、叹号=256）')) return;
+  var changes = [
+    { off: 0x00, size: 4, value: DEL_MARK },
+    { off: 0x04, size: 4, value: DEL_MARK },
+    { off: 0x68, size: 4, value: 256 }
+  ];
+  try {
+    if (Store.getMode() === 'file') {
+      // 文件模式：只改本地
+      Store.setSlotFields(idx, changes);
+      toast('🗑️ 已从文件删除 ' + label, 2500);
+      refreshFromStore();
+      return;
+    }
+    if (!BASE) BASE = await Quest.questBase();
+    var r = await Quest.setQuestFields(BASE, idx, changes);
+    if (r.ok) toast('🗑️ 已删除 ' + label, 2500);
+    else toast('⚠️ 写入后校验不一致，请检查', 4000);
+  } catch (e) {
+    toast('❌ 删除失败：' + e.message, 4000);
+  }
+  load();
+}
+
+// ---------- 添加任务 ----------
+// 空槽来源：文件模式看 Store，在线看 ALL
+function findEmptySlot() {
+  var all = findEmptySlots();
+  return all.length ? all[0] : -1;
+}
+
+function findEmptySlots() {
+  if (Store.getMode() === 'file') return Store.emptySlots();
+  var used = {};
+  for (var i = 0; i < ALL.length; i++) used[ALL[i].index] = true;
+  var out = [];
+  for (var s = 0; s < STRUCT.TASK_COUNT; s++) if (!used[s]) out.push(s);
+  return out;
+}
+
+async function openAdd(slot) {
+  if (slot === undefined) {
+    slot = findEmptySlot();
+    if (slot < 0) {
+      toast('没有空位了，请先删除一些任务', 4000);
+      return;
+    }
+  }
+  await buildAddSheet(slot);
+}
+
+/** 渲染"添加任务"面板（slot 可改，点 📋 重选） */
+async function buildAddSheet(slot) {
+  _addSlot = slot;
+
+  // 读一次空槽的"遗留数据"（游戏删除只改了 3 个字段，其它还在）
+  var q = {};
+  try {
+    if (Store.getMode() === 'file') {
+      var slot0 = Store.getSlot(slot);
+      if (slot0) q = Store.rawToFields(slot0.raw);
+    } else {
+      if (!BASE) BASE = await Quest.questBase();
+      q = (await Quest.getQuest(BASE, slot)) || {};
+    }
+  } catch (e) { /* 读失败就按全 0 填 */ }
+
+  // 每个字段的初值：用遗留数据；但 序号/编号/叹号 是"删除标记"，给合理默认
+  function initVal(f) {
+    if (f.name === '序号') {
+      var s = q['序号'];
+      return (s === undefined || s === 0xFFFFFFFF) ? 1 : s;
+    }
+    if (f.name === '编号') {
+      var n = q['编号'];
+      // 编号被删标记占用了 → 给一个未用的编号
+      if (n === undefined || n === 0xFFFFFFFF || isNaN(n)) return nextFreeId();
+      return n;
+    }
+    if (f.name === '叹号') {
+      var e = q['叹号'];
+      return (e === undefined || e === 256) ? 0 : e;
+    }
+    var v = q[f.name];
+    return (v === undefined || v === null) ? 0 : v;
+  }
+
+  var rows = FIELDS.map(function (f) {
+    var v = initVal(f);
+    var btn = '', nm = '';
+    if (f.kind === 'mon') {
+      btn = '<button class="pick" data-pick="mon" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="nm" id="anm-' + f.name + '">' + (v ? Quest.monName(v) : '') + '</span>';
+    } else if (f.kind === 'map') {
+      btn = '<button class="pick" data-pick="map" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="nm" id="anm-' + f.name + '">' + (v ? Quest.mapName(v) : '') + '</span>';
+    } else if (f.kind === 'enum') {
+      btn = '<button class="pick" data-pick="enum" data-enumkey="' + f.enum + '" data-field="' + f.name + '">📋</button>';
+      nm = '<span class="hintv" id="anm-' + f.name + '">' + Quest.enumName(f.enum, v) + '</span>';
+    } else {
+      nm = '<span class="hintv" id="anm-' + f.name + '">' + (f.hint || '') + '</span>';
+    }
+    return '<div class="frow"><label>' + f.name + '</label>' +
+      '<input type="number" data-afield="' + f.name + '" value="' + v + '" />' + btn + nm + '</div>';
+  }).join('');
+
+  var empty = findEmptySlots();
+  $('sheet').innerHTML =
+    '<h2>➕ 添加任务</h2>' +
+    '<div class="frow" style="border-bottom:1px solid var(--line)">' +
+      '<label>空槽索引</label>' +
+      '<input type="number" id="addSlot" value="' + slot + '" min="0" max="' + (STRUCT.TASK_COUNT - 1) + '" />' +
+      '<button class="pick" id="pickSlot">📋</button>' +
+      '<span class="hintv" style="min-width:110px">共 ' + empty.length + ' 个空槽</span>' +
+    '</div>' +
+    '<div class="sub" id="addSlotAddr">地址 ' +
+      (BASE + slot * 0x74).toString(16).toUpperCase() + '</div>' +
+    '<div class="hint" style="margin:0 0 12px">📥 <b>已读取该空槽遗留数据</b>，请在此基础上修改。<br>' +
+    '💡 改「空槽索引」或点 📋 换槽 → 会重新读遗留数据。<br>' +
+    '🐉 点怪物 📋 选择 → 自动带等级（怪1用主等级，怪2~5/乱入用副等级）。</div>' +
+    '<div class="sec">字段（可改）</div>' + rows +
+    '<div style="margin-top:16px">' +
+    '<button id="addSave" style="width:100%">💾 写入该空槽</button>' +
+    '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
+    '</div>';
+  $('overlay').classList.add('show');
+  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+  $('addSave').onclick = function () { saveAdd(parseInt($('addSlot').value, 10)); };
+
+  // 换槽：手动改索引（失焦时生效）
+  $('addSlot').addEventListener('change', function () {
+    var s = parseInt($('addSlot').value, 10);
+    if (isNaN(s) || s < 0 || s >= STRUCT.TASK_COUNT) { toast('索引范围 0~' + (STRUCT.TASK_COUNT - 1)); return; }
+    buildAddSheet(s);
+  });
+  $('pickSlot').onclick = function () { openSlotPicker(parseInt($('addSlot').value, 10)); };
+
+  bindPickerRows($('sheet'), 'afield', 'anm-');
+}
+
+/** 所有空槽索引（编号没出现在 ALL 里的） */
+function findEmptySlots() {
+  var used = {};
+  for (var i = 0; i < ALL.length; i++) used[ALL[i].index] = true;
+  var out = [];
+  for (var s = 0; s < STRUCT.TASK_COUNT; s++) if (!used[s]) out.push(s);
+  return out;
+}
+
+/** 空槽选择器：列出所有空槽，点一个就切过去 */
+function openSlotPicker(cur) {
+  var slots = findEmptySlots();
+  _slotCur = cur;
+  $('pkTitle').textContent = '选择空槽（共 ' + slots.length + ' 个）';
+  $('pkSearch').value = '';
+  $('pkSearch').oninput = function () { renderSlotPicker($('pkSearch').value.trim()); };
+  renderSlotPicker('');
+  $('picker').classList.add('show');
+}
+var _slotCur = -1;
+
+function renderSlotPicker(kw) {
+  var slots = findEmptySlots();
+  if (kw) slots = slots.filter(function (s) { return String(s).indexOf(kw) >= 0; });
+  if (!slots.length) { $('pkItems').innerHTML = '<div class="it">没有空槽</div>'; return; }
+  $('pkItems').innerHTML = slots.map(function (s) {
+    var on = (s === _slotCur) ? ' on' : '';
+    return '<div class="it slot-it' + on + '" data-slot="' + s + '">' +
+      '<span>索引 ' + s + '</span>' +
+      '<span class="id">' + (BASE + s * 0x74).toString(16).toUpperCase() + '</span></div>';
+  }).join('');
+  $('pkItems').querySelectorAll('.slot-it').forEach(function (el) {
+    el.onclick = function () {
+      var s = parseInt(el.dataset.slot, 10);
+      $('picker').classList.remove('show');
+      buildAddSheet(s);
+    };
+  });
+}
+
+/** 找一个未被使用的编号（700000 起） */
+function nextFreeId() {
+  var used = {};
+  for (var i = 0; i < ALL.length; i++) used[ALL[i]['编号']] = true;
+  for (var n = STRUCT.TASK_ID_BASE; n <= STRUCT.TASK_ID_BASE + STRUCT.TASK_COUNT; n++) {
+    if (!used[n]) return n;
+  }
+  return STRUCT.TASK_ID_BASE;
+}
+
+var _addSlot = -1;
+
+async function saveAdd(slot) {
+  // 校验：目标槽必须是"空槽"（避免覆盖已有任务）
+  if (isNaN(slot) || slot < 0 || slot >= STRUCT.TASK_COUNT) {
+    toast('❌ 索引必须在 0~' + (STRUCT.TASK_COUNT - 1) + ' 之间', 4500);
+    return;
+  }
+  var used = {};
+  for (var u = 0; u < ALL.length; u++) used[ALL[u].index] = true;
+  if (used[slot]) {
+    toast('❌ 索引 ' + slot + ' 已被占用（不是空槽），请换一个', 4500);
+    return;
+  }
+
+  var inputs = [].slice.call($('sheet').querySelectorAll('input[data-afield]'));
+  var changes = [], vmap = {};
+  inputs.forEach(function (el) {
+    var f = Quest.fieldByName(el.dataset.afield); if (!f) return;
+    var val = parseInt(el.value, 10);
+    if (isNaN(val)) val = 0;
+    vmap[f.name] = val;
+    changes.push({ off: f.off, size: f.size, value: val });
+  });
+
+  // 校验：编号必填 + 不重复
+  var num = vmap['编号'] || 0;
+  if (num < STRUCT.TASK_ID_BASE || num > STRUCT.TASK_ID_BASE + STRUCT.TASK_COUNT) {
+    toast('❌ 编号必须是 ' + STRUCT.TASK_ID_BASE + ' ~ ' + (STRUCT.TASK_ID_BASE + STRUCT.TASK_COUNT) + ' 之间', 4500);
+    return;
+  }
+  var dup = ALL.filter(function (x) { return x['编号'] === num; })[0];
+  if (dup) { toast('❌ 编号 ' + num + ' 已存在（索引 ' + dup.index + '）', 4500); return; }
+
+  var btn = $('addSave');
+  busy(btn, true, '⏳ 写入中…');
+  try {
+    if (Store.getMode() === 'file') {
+      // 文件模式：本地写（把空槽变成有效任务）
+      Store.setSlotFields(slot, changes);
+      toast('✅ 已添加到文件（索引 ' + slot + '，编号 ' + num + '）', 3000);
+      busy(btn, false);
+      $('overlay').classList.remove('show');
+      refreshFromStore();
+      return;
+    }
+    if (!BASE) BASE = await Quest.questBase();
+    var r = await Quest.setQuestFields(BASE, slot, changes);
+    if (r.ok) toast('✅ 已写入空槽 ' + slot + '（编号 ' + num + '）', 3000);
+    else toast('⚠️ 写入后校验不一致，请检查', 4000);
+  } catch (e) {
+    toast('❌ 写入失败：' + e.message, 4000);
+  }
+  busy(btn, false);
+  $('overlay').classList.remove('show');
+  load();
+}
+
+// ---------- 导出 / 导入（备份 & 分享）----------
+
+/** 导出当前数据源为 JSON 文件（秒出：数据已在内存里） */
+function doExport() {
+  if (!Store.getSlots().length) { toast('还没有数据，先加载或打开文件'); return; }
+  var name = prompt('文件名（不含扩展名）：', '怪异任务_' + tsName());
+  if (!name) return;
+  name = name.replace(/[\\/:*?"<>|]/g, '_');
+  if (!/\.json$/i.test(name)) name += '.json';
+
+  try {
+    var data = Store.toExport();
+    var blob = new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    toast('✅ 已导出 ' + data.quests.length + ' 个槽 → ' + name, 3500);
+  } catch (e) {
+    toast('❌ 导出失败：' + e.message, 4000);
+  }
+}
+
+function tsName() {
+  var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '_' +
+    p(d.getHours()) + p(d.getMinutes());
+}
+
+/** 上传到游戏：把当前数据（含文件编辑的）写进 Switch 内存 */
+async function doWriteBack() {
+  if (_busy) return;
+  if (Store.getMode() === 'file') {
+    toast('⚠️ 当前是文件模式，上传需要连上 Switch。请先点「🔄 读取游戏任务」');
+    return;
+  }
+  var slots = Store.getSlots();
+  if (!slots.length) { toast('没有数据'); return; }
+  if (!confirm('把当前 ' + slots.length + ' 个任务全部上传到游戏吗？\n\n⚠️ 会覆盖游戏里的任务！\n（大块写入，约 1~3 秒）')) return;
+  setBusy(true);
+  var btn = $('writeBackBtn');
+  busy(btn, true, '⏳ 上传中…');
+  var pb = $('progressbar'); pb.classList.add('show');
+  pb.querySelector('.pbar-txt').textContent = '大块写入中…';
+  pb.querySelector('.pbar-fill').style.width = '30%';
+  try {
+    if (!BASE) BASE = await Quest.questBase();
+    var ok = await Quest.writeAllRaw(slots, function (c, t) {});
+    pb.querySelector('.pbar-fill').style.width = '100%';
+    pb.classList.remove('show');
+    toast('✅ 已上传 ' + ok + ' 个任务到游戏', 3500);
+  } catch (e) {
+    pb.classList.remove('show');
+    toast('❌ 上传失败：' + e.message, 4000);
+  }
+  busy(btn, false);
+  setBusy(false);
+  load();
+}
+
+// 给"字段行"统一绑定 📋 选择器（前缀用于区分单任务编辑/添加）
+function bindPickerRows(root, inputAttr, nmPrefix) {
+  root.querySelectorAll('[data-pick]').forEach(function (b) {
+    b.onclick = function () {
+      var field = b.dataset.field, kind = b.dataset.pick;
+      var f = Quest.fieldByName(field);
+      if (kind === 'enum') {
+        openEnumPicker(f.enum, function (val) {
+          var inp = root.querySelector('input[' + inputAttr + '="' + field + '"]');
+          if (inp) inp.value = val;
+          var nm = $(nmPrefix + field); if (nm) nm.textContent = Quest.enumName(f.enum, val);
+        });
+        return;
+      }
+      openPicker(kind, function (id) {
+        var inp = root.querySelector('input[' + inputAttr + '="' + field + '"]');
+        if (inp) inp.value = id;
+        var nm = $(nmPrefix + field);
+        if (nm) nm.textContent = (kind === 'mon') ? Quest.monName(id) : Quest.mapName(id);
+        if (kind === 'mon' && id) {
+          var lv = MON_LEVELS[id];
+          if (f && f.linked && lv) {
+            var role = (f.slot === 1) ? 0 : 1;
+            var lvinp = root.querySelector('input[' + inputAttr + '="' + f.linked + '"]');
+            if (lvinp) lvinp.value = lv[role];
+          }
+        }
+      });
+    };
+  });
+  // 手改数值时刷新枚举名提示
+  root.querySelectorAll('input[' + inputAttr + ']').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      var f = Quest.fieldByName(inp.getAttribute(inputAttr));
+      var nm = $(nmPrefix + (f ? f.name : ''));
+      if (!nm || !f || f.kind !== 'enum') return;
+      nm.textContent = Quest.enumName(f.enum, parseInt(inp.value, 10) || 0);
+    });
+  });
+}
+
+// ---------- 选择器（怪物 / 地图 / 枚举）----------
+
+var _pkCb = null, _pkKind = null, _pkEnumKey = null;
+
+function openPicker(kind, cb) {
+  _pkKind = kind; _pkCb = cb; _pkEnumKey = null;
+  $('pkTitle').textContent = (kind === 'mon') ? '选择怪物' : '选择地图';
+  $('pkSearch').value = '';
+  renderPicker('');
+  $('picker').classList.add('show');
+  $('pkSearch').oninput = function () { renderPicker($('pkSearch').value.trim()); };
+  // 不自动聚焦（避免弹键盘）
+}
+function openEnumPicker(enumKey, cb) {
+  _pkKind = 'enum'; _pkCb = cb; _pkEnumKey = enumKey;
+  $('pkTitle').textContent = '选择「' + enumKey + '」';
+  $('pkSearch').value = '';
+  renderPicker('');
+  $('picker').classList.add('show');
+  $('pkSearch').oninput = function () { renderPicker($('pkSearch').value.trim()); };
+  // 不自动聚焦（避免弹键盘）
+}
+function renderPicker(kw) {
+  var html = '';
+  if (_pkKind === 'enum') {
+    var en = ENUMS[_pkEnumKey] || {};
+    var list = Object.keys(en).map(function (k) { return { id: k, name: en[k] }; });
+    if (kw) { kw = kw.toLowerCase(); list = list.filter(function (o) { return o.name.toLowerCase().indexOf(kw) >= 0 || String(o.id).indexOf(kw) >= 0; }); }
+    html = list.map(function (o) {
+      return '<div class="it" data-id="' + o.id + '"><span>' + o.name + '</span><span class="id">' + o.id + '</span></div>';
+    }).join('');
+  } else {
+    var table = (_pkKind === 'mon') ? MONSTERS : MAPS;
+    var lst = Object.keys(table).map(function (k) { return { id: k, name: table[k] }; });
+    if (kw) { kw = kw.toLowerCase(); lst = lst.filter(function (o) { return o.name.toLowerCase().indexOf(kw) >= 0 || String(o.id).indexOf(kw) >= 0; }); }
+    lst.sort(function (a, b) { return (+a.id) - (+b.id); });
+    html = '<div class="it" data-id="0"><span>— 无 (0) —</span><span class="id">0</span></div>';
+    html += lst.map(function (o) {
+      var lv = (_pkKind === 'mon') ? MON_LEVELS[o.id] : null;
+      var lvTxt = lv ? ('主' + lv[0] + '/副' + lv[1]) : '';
+      return '<div class="it" data-id="' + o.id + '"><span>' + o.name +
+        (lvTxt ? (' <span class="id">' + lvTxt + '</span>') : '') + '</span>' +
+        '<span class="id">' + o.id + ' (0x' + (+o.id).toString(16).toUpperCase() + ')</span></div>';
+    }).join('');
+  }
+  $('pkItems').innerHTML = html;
+  $('pkItems').querySelectorAll('.it').forEach(function (el) {
+    el.onclick = function () {
+      var id = parseInt(el.dataset.id, 10);
+      if (_pkCb) _pkCb(id);
+      $('picker').classList.remove('show');
+    };
+  });
+}
+
+// ---------- 设置中转地址（面板，可测试连接）----------
+
+function cfgAddr() {
+  $('sheet').innerHTML =
+    '<h2>⚙️ 中转地址</h2>' +
+    '<div class="sub">中转（Termux 里跑的 中转服务.py）的地址</div>' +
+    '<div class="frow"><label>地址</label>' +
+    '<input id="cfgUrl" type="text" inputmode="url" style="width:auto;flex:1;text-align:left" ' +
+    'value="' + Bridge.getBase() + '" placeholder="http://192.168.1.5:8080" /></div>' +
+    '<div class="hint">' +
+    '• 手机浏览器直接开中转网页：填 <b>http://127.0.0.1:8080</b>（如果中转和浏览器同环境）<br>' +
+    '• 从别的 App / 别的设备访问：填 <b>http://手机局域网IP:8080</b>（如 http://192.168.1.5:8080）<br>' +
+    '• 不带端口默认 8080' +
+    '</div>' +
+    '<div id="cfgTest" class="hint" style="min-height:20px"></div>' +
+    '<div style="margin-top:12px">' +
+    '<button id="cfgSave" style="width:100%">💾 保存并重连</button>' +
+    '<button class="ghost" id="cfgTestBtn" style="margin-top:8px;width:100%">🔍 测试连接</button>' +
+    '<button class="ghost" id="cfgCancel" style="margin-top:8px;width:100%">取消</button>' +
+    '</div>';
+  $('overlay').classList.add('show');
+  $('cfgCancel').onclick = function () { $('overlay').classList.remove('show'); };
+  $('cfgTestBtn').onclick = testCfg;
+  $('cfgSave').onclick = function () {
+    var u = ($('cfgUrl').value || '').trim();
+    if (!u) { toast('请填写地址'); return; }
+    if (!/^https?:\/\//.test(u)) u = 'http://' + u;         // 自动补协议
+    if (!/:\d+$/.test(u)) u = u.replace(/\/+$/, '') + ':8080'; // 没端口补 8080
+    Bridge.setBase(u);
+    $('overlay').classList.remove('show');
+    toast('已保存：' + u);
+    load();
+  };
+}
+window.cfgAddr = cfgAddr;   // 供内联 onclick 调用
+
+async function testCfg() {
+  var u = ($('cfgUrl').value || '').trim();
+  if (!u) { toast('请填写地址'); return; }
+  if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+  if (!/:\d+$/.test(u)) u = u.replace(/\/+$/, '') + ':8080';
+  var box = $('cfgTest');
+  box.innerHTML = '⏳ 测试中…';
+  try {
+    var r = await fetch(u.replace(/\/+$/, '') + '/status');
+    var j = await r.json();
+    if (j.ok && j.connected) box.innerHTML = '✅ 通了！中转在线，Switch 也连上了（' + j.ip + ':' + j.port + '）';
+    else if (j.ok) box.innerHTML = '⚠️ 中转通了，但 Switch 没连上（检查游戏是否开着）';
+    else box.innerHTML = '❓ 有响应但格式不对：' + JSON.stringify(j);
+  } catch (e) {
+    box.innerHTML = '❌ 连不上：' + e.message + '<br>（地址对了吗？中转在跑吗？）';
+  }
+}
+
+// ---------- 事件绑定 ----------
+
+document.addEventListener('DOMContentLoaded', function () {
+  // JS 跑到了 → 隐藏"JS没执行"警告，并在标题旁打勾
+  var jc = $('jsCheck');
+  if (jc) jc.style.display = 'none';
+  var tag = $('jsTag');
+  if (tag) tag.textContent = '✅JS已运行';
+
+  // 全局错误捕获：任何 JS 错误直接显示出来（方便排查）
+  window.addEventListener('error', function (e) {
+    var b = document.getElementById('errBox');
+    if (!b) {
+      b = document.createElement('div');
+      b.id = 'errBox';
+      b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:999;background:#f85149;color:#fff;padding:8px 12px;font-size:12px;white-space:pre-wrap';
+      document.body.appendChild(b);
+    }
+    b.textContent = '⚠️ JS 错误：' + e.message + '  (' + (e.filename || '') + ':' + (e.lineno || '') + ')';
+  });
+
+  // 逐个绑定（每个都 try，避免一个失败挡住后面）
+  function bind(id, fn) {
+    try {
+      var el = $(id);
+      if (!el) { console.warn('缺少元素 #' + id); return; }
+      el.addEventListener('click', fn);
+    } catch (err) { console.error('绑定 ' + id + ' 失败: ' + err); }
+  }
+
+  bind('list', function (e) {
+    // 先判断是不是点了删除按钮
+    var del = e.target.closest('[data-del]');
+    if (del) { e.stopPropagation(); delQuest(parseInt(del.dataset.del, 10)); return; }
+    var el = e.target.closest('.q');
+    if (el) openQuest(parseInt(el.dataset.idx, 10));
+  });
+  bind('search', function () { render(); });   // 改为 click/input
+  $('search').addEventListener('input', render);
+  $('sort').addEventListener('change', render);
+  bind('reload', load);
+  bind('addBtn', openAdd);
+  bind('batch', openBatch);
+  bind('exportBtn', doExport);
+  bind('openBtn', openDataFile);
+  bind('writeBackBtn', doWriteBack);
+  bind('cfgBtn', cfgAddr);
+
+  $('overlay').addEventListener('click', function (e) {
+    if (e.target.id === 'overlay') $('overlay').classList.remove('show');
+  });
+  $('picker').addEventListener('click', function (e) {
+    if (e.target.id === 'picker') $('picker').classList.remove('show');
+  });
+
+  load();
+});
 </script>
 </body>
 </html>

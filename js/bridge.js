@@ -4,21 +4,21 @@
  * ============================================================ */
 
 var Bridge = (function () {
-  // 中转地址
-  //  优先级：localStorage 手动设置 > 当前页面的 host > 默认 127.0.0.1
-  //  说明：网页就是中转自己发出来的（GET / 返回 index.html），
-  //        所以"哪个地址能打开网页，那个地址就能连中转" —— 直接用 location.host 最稳。
-  var DEFAULT = 'http://127.0.0.1:8080';
-  var base = localStorage.getItem('bridge') || null;
+  // 中转地址（固定默认：http://127.0.0.1:6001）
+  //  优先级：localStorage 手动设置 > 默认 127.0.0.1:6001
+  //  说明：网页可能由别的服务（如 8093）发出来，未必和中转同址，
+  //        所以这里【不做自动探测】，默认就是 127.0.0.1:6001。
+  var DEFAULT = 'http://127.0.0.1:6001';
+  var base = localStorage.getItem('bridge') || DEFAULT;
 
-  (function autoDetect() {
-    if (base) return;                 // 用户手动设置过，优先用
-    var h = location.hostname;
-    // 用当前页面的来源拼中转地址（端口固定 8080）
-    if (h && h !== 'localhost') {
-      base = 'http://' + h + ':8080';
-    } else {
+  // 迁移：早期版本可能存过 8080 / localhost 等旧地址 → 自动升级到新默认值
+  (function migrate() {
+    if (!base) { base = DEFAULT; return; }
+    // 只要端口不是 6001，且是"本机/回环"地址，就换成新默认值
+    var m = base.match(/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(?::(\d+))?/i);
+    if (m && m[2] !== '6001') {
       base = DEFAULT;
+      localStorage.setItem('bridge', base);
     }
   })();
 

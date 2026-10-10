@@ -129,6 +129,53 @@ var Quest = (function () {
     return indexList.length;
   }
 
+  /** 批量"清空"：把多个任务都打成删除标记
+   *  删除标记 = 序号(0x00)=FFFFFFFF、编号(0x04)=FFFFFFFF、叹号(0x68)=256
+   *  ⚡ 一次大块读 → 本地打标记 → 一次大块写回（比逐个快几十倍）
+   */
+  async function clearManyQuests(base, indexList, onProgress) {
+    if (!indexList.length) return 0;
+    var minI = Math.min.apply(null, indexList);
+    var maxI = Math.max.apply(null, indexList);
+    var startAddr = base + minI * STRUCT.TASK_SIZE;
+    var span = (maxI - minI + 1) * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(startAddr, span);   // ⚡ 一次读
+    for (var i = 0; i < indexList.length; i++) {
+      var local = (indexList[i] - minI) * STRUCT.TASK_SIZE;
+      Mem.putU32(buf, local + 0x00, 0xFFFFFFFF);
+      Mem.putU32(buf, local + 0x04, 0xFFFFFFFF);
+      Mem.putU32(buf, local + 0x68, 256);
+    }
+    await Mem.writeRange(startAddr, buf);   // ⚡ 大块写回
+    if (onProgress) onProgress(indexList.length, indexList.length);
+    return indexList.length;
+  }
+
+  /** 批量"恢复"：把多个已删除的槽变回有效任务
+   *  items = { index: {seq, num} }   —— 每个槽要写入的 序号 / 编号
+   *  写入：序号(0x00)=seq、编号(0x04)=num、叹号(0x68)=1
+   *  ⚡ 一次大块读 → 本地改 → 一次大块写回
+   */
+  async function restoreManyQuests(base, items, onProgress) {
+    var ks = Object.keys(items).map(Number);
+    if (!ks.length) return 0;
+    var minI = Math.min.apply(null, ks);
+    var maxI = Math.max.apply(null, ks);
+    var startAddr = base + minI * STRUCT.TASK_SIZE;
+    var span = (maxI - minI + 1) * STRUCT.TASK_SIZE;
+    var buf = await Mem.readRange(startAddr, span);   // ⚡ 一次读
+    for (var i = 0; i < ks.length; i++) {
+      var ix = ks[i];
+      var local = (ix - minI) * STRUCT.TASK_SIZE;
+      Mem.putU32(buf, local + 0x00, items[ix].seq >>> 0);
+      Mem.putU32(buf, local + 0x04, items[ix].num >>> 0);
+      Mem.putU32(buf, local + 0x68, 1);   // 叹号 = 1（显示"新任务"）
+    }
+    await Mem.writeRange(startAddr, buf);   // ⚡ 大块写回
+    if (onProgress) onProgress(ks.length, ks.length);
+    return ks.length;
+  }
+
   /** 读全部 200 个槽的"原始 116 字节"（含空槽，用于导出）
    *  返回 [{index, addr, raw(hex), ok}]  —— 一次大块读
    */
@@ -254,9 +301,9 @@ var Quest = (function () {
     var keys = ['怪1ID', '怪2ID', '怪3ID', '怪4ID', '怪5ID'];
     for (var i = 0; i < keys.length; i++) {
       var mid = t[keys[i]];
-      if (mid) arr.push({ id: mid, name: monName(mid), lv: t['怪' + (i + 1) + '级'] });
+      if (mid) arr.push({ id: mid, name: monName(mid), lv: t['怪' + (i + 1) + '级'], inv: false });
     }
-    if (t['乱入ID']) arr.push({ id: t['乱入ID'], name: '乱入:' + monName(t['乱入ID']), lv: t['乱入级'] });
+    if (t['乱入ID']) arr.push({ id: t['乱入ID'], name: '乱入:' + monName(t['乱入ID']), lv: t['乱入级'], inv: true });
     return arr;
   }
 
@@ -267,6 +314,8 @@ var Quest = (function () {
     setQuestFields: setQuestFields,
     setManyQuests: setManyQuests,
     setManyQuestsDiff: setManyQuestsDiff,
+    clearManyQuests: clearManyQuests,
+    restoreManyQuests: restoreManyQuests,
     getAllRaw: getAllRaw,
     writeRaw: writeRaw,
     writeAllRaw: writeAllRaw,

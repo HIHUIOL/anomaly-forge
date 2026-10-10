@@ -190,7 +190,47 @@ var Quest = (function () {
     return STRUCT.TASK_COUNT;
   }
 
-  // ---------- 展示辅助 ----------
+  // ---------- 序号计数器（游戏获得新怪异任务时取用的"序号"来源）----------
+  // 金手指：640F0000 11A2E990 00000409
+  //   前 3 行指针链：
+  //     reg0 = u64(peekMain(0x12A58748))
+  //     reg1 = u64(reg0 + 0x100)
+  //     reg0 = reg1 + 0x34          <-- 序号计数器地址!
+  //   末行把 8 字节 [00000409][90E9A211] 写到 reg0：
+  //     +0x00 = 00000409 (1033)  ← 序号计数器的值
+  //     +0x04 = 11A2E990 (其余字节，游戏会改动)
+  // 实测（重启游戏后）：reg1+0x34 读出 = 1033 ✅
+  /** 定位"序号计数器"地址（ASLR 安全） */
+  async function seqCounterAddr() {
+    var reg0 = Mem.u64(await Mem.peekMain(STRUCT.MAIN_PTR_OFFSET, 8));
+    if (!reg0) return null;
+    var reg1 = Mem.u64(await Mem.readAbs(reg0 + 0x100, 8));
+    if (!reg1) return null;
+    return reg1 + STRUCT.SEQ_COUNTER_DELTA;   // + 0x34
+  }
+
+  /** 读"序号计数器"（游戏获得新怪异任务时取用的序号来源） */
+  async function readSeqCounter() {
+    var addr = await seqCounterAddr();
+    if (!addr) return null;
+    var bytes = await Mem.readAbs(addr, 4);
+    if (!bytes || bytes.length < 4) return null;
+    return Mem.u32(bytes, 0);
+  }
+
+  /** 写"序号计数器" */
+  async function writeSeqCounter(value) {
+    var addr = await seqCounterAddr();
+    if (!addr) return false;
+    var b = new Uint8Array(4);
+    Mem.putU32(b, 0, value >>> 0);
+    await Mem.writeAbs(addr, b);
+    // 回读校验
+    var chk = await Mem.readAbs(addr, 4);
+    if (!chk || chk.length < 4) return false;
+    return Mem.u32(chk, 0) === (value >>> 0);
+  }
+
   function monName(id) {
     if (!id) return '无';
     return MONSTERS[id] || ('未知(0x' + Number(id).toString(16).toUpperCase() + ')');
@@ -231,6 +271,8 @@ var Quest = (function () {
     writeRaw: writeRaw,
     writeAllRaw: writeAllRaw,
     parseQuest: parseQuest,
+    readSeqCounter: readSeqCounter,
+    writeSeqCounter: writeSeqCounter,
     monName: monName,
     mapName: mapName,
     enumName: enumName,

@@ -14,6 +14,7 @@ var Store = (function () {
   var slots = [];       // 200 槽：[{index, raw, fields}]
   var mode = 'none';    // 'online' | 'file' | 'none'
   var sourceInfo = '';  // 数据来源描述
+  var seqCounter = null; // 序号计数器（游戏获得新怪异任务时取用的序号来源）；null = 未知/文件里没有
 
   // ---------- 原始 hex ↔ fields ----------
   function rawToFields(rawHex) {
@@ -72,6 +73,12 @@ var Store = (function () {
     slots = raw.map(function (s) {
       return { index: s.index, raw: s.raw, fields: rawToFields(s.raw) };
     });
+    // 顺便读"序号计数器"
+    try {
+      seqCounter = await Quest.readSeqCounter();
+    } catch (e) {
+      seqCounter = null;
+    }
     mode = 'online';
     sourceInfo = 'Switch 内存';
     return slots;
@@ -94,6 +101,8 @@ var Store = (function () {
       if (!have[s]) slots.push({ index: s, raw: emptyRaw(), fields: rawToFields(emptyRaw()) });
     }
     slots.sort(function (a, b) { return a.index - b.index; });
+    // 序号计数器（文件里带了就用）
+    seqCounter = (typeof d.seqCounter === 'number') ? d.seqCounter : null;
     mode = 'file';
     sourceInfo = fname ? ('文件：' + fname) : '打开的文件';
     return true;
@@ -116,6 +125,7 @@ var Store = (function () {
       game: 'MONSTER HUNTER RISE 16.0.2',
       taskSize: STRUCT.TASK_SIZE,
       taskCount: STRUCT.TASK_COUNT,
+      seqCounter: seqCounter,     // 序号计数器（新任务序号来源）
       exportedAt: new Date().toISOString(),
       quests: slots.map(function (s) {
         return {
@@ -155,7 +165,9 @@ var Store = (function () {
   function getSlots() { return slots; }
   function getMode() { return mode; }
   function getSource() { return sourceInfo; }
-  function clear() { slots = []; mode = 'none'; sourceInfo = ''; }
+  function getSeqCounter() { return seqCounter; }
+  function setSeqCounter(v) { seqCounter = (v === null || v === undefined) ? null : (v >>> 0); }
+  function clear() { slots = []; mode = 'none'; sourceInfo = ''; seqCounter = null; }
 
   return {
     rawToFields: rawToFields,
@@ -172,6 +184,8 @@ var Store = (function () {
     getSlots: getSlots,
     getMode: getMode,
     getSource: getSource,
+    getSeqCounter: getSeqCounter,
+    setSeqCounter: setSeqCounter,
     clear: clear
   };
 })();

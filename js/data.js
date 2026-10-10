@@ -124,5 +124,9 @@ var STRUCT = {
   MAIN_PTR_OFFSET: 0x12A58748,  // NSO 里的主指针偏移
   TASK_SIZE: 0x74,              // 每个任务 116 字节
   TASK_COUNT: 200,
-  TASK_ID_BASE: 700000
+  TASK_ID_BASE: 700000,
+  // "序号计数器"（游戏获得新怪异任务时取用的序号来源）：
+  //   地址 = u64(u64(peekMain(MAIN_PTR_OFFSET)) + 0x100) + SEQ_COUNTER_DELTA
+  //   实测金手指：640F0000 11A2E990 00000409 → 写 1033 到该地址
+  SEQ_COUNTER_DELTA: 0x34
 };

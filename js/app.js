@@ -7,6 +7,94 @@ var $ = function (id) { return document.getElementById(id); };
 var ALL = [];      // 已读取的任务
 var BASE = null;   // 任务数组基址（缓存）
 
+// ---------- 弹窗开关（锁定/恢复背景滚动，避免"关掉弹窗后列表位置变了"）----------
+var _bodyLocked = false;    // 是否已锁定（用独立标志，不能用 0 当哨兵！）
+var _bodyScrollY = 0;
+function lockBodyScroll() {
+  if (_bodyLocked) return;   // 已经锁过
+  _bodyScrollY = window.scrollY || window.pageYOffset || 0;
+  _bodyLocked = true;
+  document.body.style.position = 'fixed';
+  document.body.style.top = (-_bodyScrollY) + 'px';
+  document.body.style.left = '0';
+  document.body.style.right = '0';
+  document.body.style.width = '100%';
+}
+function unlockBodyScroll() {
+  if (!_bodyLocked) return;   // 没锁过 → 什么都不做
+  _bodyLocked = false;
+  document.body.style.position = '';
+  document.body.style.top = '';
+  document.body.style.left = '';
+  document.body.style.right = '';
+  document.body.style.width = '';
+  window.scrollTo(0, _bodyScrollY);
+}
+/** 显示遮罩弹窗（自动锁定背景滚动）*/
+function showOverlay() {
+  $('overlay').classList.add('show');
+  lockBodyScroll();
+}
+/** 关闭遮罩弹窗（自动恢复背景滚动位置）*/
+function hideOverlay() {
+  $('overlay').classList.remove('show');
+  unlockBodyScroll();
+}
+/** 兜底：如果遮罩已隐藏但 body 还锁着，强制解锁（防卡死）*/
+function ensureUnlocked() {
+  var ov = $('overlay');
+  if (ov && !ov.classList.contains('show')) unlockBodyScroll();
+}
+
+// ---------- 输入框限制（按字段字节数）----------
+// size=4 → 有符号 int32: -2147483648 ~ 2147483647
+// size=1 → 有符号 int8 : -128 ~ 127
+function fieldMax(f) {
+  return (f && f.size === 1) ? 127 : 2147483647;
+}
+/** 生成 input 的公共属性（有符号上下限 + 只能整数）*/
+function numAttrs(f) {
+  return ' type="number" min="' + fieldMin(f) + '" max="' + fieldMax(f) + '" step="1"'
+       + ' inputmode="numeric" oninput="clampInput(this)"';
+}
+/** 输入时把值夹到 [min, max] */
+function clampInput(el) {
+  if (el.value === '') return;
+  var v = parseInt(el.value, 10);
+  if (isNaN(v)) { el.value = ''; return; }
+  var lo = parseInt(el.min, 10), hi = parseInt(el.max, 10);
+  if (!isNaN(lo) && v < lo) v = lo;
+  if (!isNaN(hi) && v > hi) v = hi;
+  if (String(v) !== el.value) el.value = v;
+}
+/** 取字段值并夹到该字段的合法范围（写入前的最后一道防线）——返回【无符号位模式】*/
+function clampFieldVal(f, raw) {
+  var v = parseInt(raw, 10);
+  if (isNaN(v)) v = 0;
+  var lo = fieldMin(f), hi = fieldMax(f);
+  if (v < lo) v = lo;
+  if (v > hi) v = hi;
+  return toUnsigned(v, f && f.size);   // 转为无符号位模式，供写入
+}
+
+// ---------- 有符号 / 无符号转换 ----------
+// 内存里按"位模式"存储（补码），显示与输入按"有符号"解释。
+// 业务判断（如空槽 === 0xFFFFFFFF）仍然用无符号，避免失效。
+/** 无符号位模式 → 有符号数（用于显示）*/
+function toSigned(u, size) {
+  u = (u >>> 0);
+  if (size === 1) return (u & 0xFF) << 24 >> 24;              // int8
+  return (u & 0xFFFFFFFF) | 0;                                // int32（JS 位运算天然 32 位有符号）
+}
+/** 有符号数 → 无符号位模式（用于写入）*/
+function toUnsigned(v, size) {
+  v = parseInt(v, 10) || 0;
+  if (size === 1) return (v & 0xFF) >>> 0;
+  return (v >>> 0);
+}
+/** 字段的最小子值（有符号）*/
+function fieldMin(f) { return (f && f.size === 1) ? -128 : -2147483648; }
+
 function toast(msg, ms) {
   ms = ms || 2400;
   var t = $('toast'); t.textContent = msg; t.classList.add('show');
@@ -61,6 +149,7 @@ async function load() {
     setDot('ok', ALL.length + ' 个任务 · ' + st.ip + ':' + st.port);
     pb.classList.remove('show');
     updateModeTag();
+    updateSeqStat();
     render();
   } catch (e) {
     pb.classList.remove('show');
@@ -85,7 +174,53 @@ function refreshFromStore() {
     BASE = null;   // 文件模式没有真实基址
   }
   updateModeTag();
+  updateSeqStat();
   render();
+}
+
+/** 更新顶部"序号计数器"显示 */
+function updateSeqStat() {
+  var el = $('seqStat');
+  if (!el) return;
+  var v = Store.getSeqCounter();
+  if (v === null || v === undefined) {
+    el.textContent = '🔢 —';
+    el.style.color = '#888';
+    el.title = '序号计数器：未知（读一下 Switch 或打开带它的文件）';
+  } else {
+    el.textContent = '🔢 ' + v;
+    el.style.color = '#58a6ff';
+    el.title = '序号计数器 = ' + v + '（游戏获得新怪异任务时会取用此值作为任务序号）\n点击修改';
+  }
+}
+
+/** 点击顶部"序号计数器" → 修改 */
+async function editSeqCounter() {
+  if (_busy) return;
+  var cur = Store.getSeqCounter();
+  var s = prompt('修改「序号计数器」\n\n= 游戏在【获得新的怪异任务】时会取用的序号（取走后自己+1）\n\n当前值：' + (cur === null || cur === undefined ? '未知' : cur) + '\n\n输入新值（十进制）：', cur === null || cur === undefined ? '' : String(cur));
+  if (s === null) return;                 // 取消
+  s = s.trim();
+  if (!/^\d+$/.test(s)) { toast('❌ 请输入非负整数', 3000); return; }
+  var v = parseInt(s, 10) >>> 0;
+
+  // 在线模式：直接写进 Switch
+  if (Store.getMode() === 'online') {
+    setBusy(true);
+    try {
+      var ok = await Quest.writeSeqCounter(v);
+      Store.setSeqCounter(v);
+      updateSeqStat();
+      toast(ok ? ('✅ 序号计数器已设为 ' + v) : '⚠️ 写入后校验不一致，请检查', ok ? 2500 : 4000);
+    } catch (e) {
+      toast('❌ 写入失败：' + e.message, 4000);
+    } finally { setBusy(false); }
+  } else {
+    // 文件模式：只改本地（导出时会带上）
+    Store.setSeqCounter(v);
+    updateSeqStat();
+    toast('📄 已改（文件模式，导出时带上）', 3000);
+  }
 }
 
 /** 顶部状态：在线/文件 */
@@ -163,7 +298,12 @@ function render() {
   var parts = $('sort').value.split('-');
   var dir = parts[1] === 'desc' ? -1 : 1;
   var field = parts[0];
-  arr.sort(function (a, b) { return (a[field] - b[field]) * dir; });
+  // 排序也按"有符号"比较（序号/编号/index 均为正数，行为不变；负数会正确排在前）
+  arr.sort(function (a, b) {
+    var va = (field === 'index') ? a.index : toSigned(a[field], 4);
+    var vb = (field === 'index') ? b.index : toSigned(b[field], 4);
+    return (va - vb) * dir;
+  });
 
   $('list').innerHTML = arr.map(function (q) {
     var tags = [];
@@ -180,15 +320,23 @@ function render() {
     var monsHtml = mons.map(monChip).join('') || '<span class="mon">无怪</span>';
 
     // 怪异等级 = 怪物1级 + 1
-    var weird = (q['怪1级'] || 0) + 1;
+    // 卡片上的数值统一按"有符号"显示（4 字节字段）
+    var sGrade = toSigned(q['等级'], 4);
+    var sTime  = toSigned(q['时间限制'], 4);
+    var sCart  = toSigned(q['猫车'], 4);
+    var sPlayers = toSigned(q['人数'], 4);
+    var sLv1   = toSigned(q['怪1级'], 4);
+    var weird = sLv1 + 1;
+    // 有符号显示（正值不变；0xFFFFFFFF 会显示成 -1，符合有符号观感）
+    var sNo = toSigned(q['编号'], 4), sSeq = toSigned(q['序号'], 4);
 
     return '<div class="q" data-idx="' + q.index + '">' +
       '<button class="del" data-del="' + q.index + '" title="删除此任务">🗑️</button>' +
-      '<div class="top"><span class="no">#' + q['编号'] + '</span>' +
-      '<span class="idx">序号 ' + q['序号'] + ' · 内存#' + q.index + '</span>' +
+      '<div class="top"><span class="no">#' + sNo + '</span>' +
+      '<span class="idx">序号 ' + sSeq + ' · 内存#' + q.index + '</span>' +
       '<span class="lv">怪异 ' + weird + '★</span></div>' +
-      '<div class="map">🗺️ ' + Quest.mapName(q['地图']) + ' · Lv' + q['等级'] +
-        ' · ' + q['时间限制'] + '分 · 猫车' + q['猫车'] + ' · ' + q['人数'] + '人</div>' +
+      '<div class="map">🗺️ ' + Quest.mapName(q['地图']) + ' · Lv' + sGrade +
+        ' · ' + sTime + '分 · 猫车' + sCart + ' · ' + sPlayers + '人</div>' +
       '<div class="mons">' + monsHtml + '</div>' +
       (tags.length ? '<div class="tags">' + tags.join('') + '</div>' : '') +
       '</div>';
@@ -218,7 +366,8 @@ async function openQuest(idx) {
   _curIdx = idx;
 
   var rows = FIELDS.map(function (f) {
-    var v = q[f.name] !== undefined ? q[f.name] : 0;
+    var v = q[f.name] !== undefined ? q[f.name] : 0;   // 无符号位模式（用于查表）
+    var disp = (f.size === 4 || f.size === 1) ? toSigned(v, f.size) : v;   // 有符号（用于显示）
     var btn = '', nm = '';
     if (f.kind === 'mon') {
       btn = '<button class="pick" data-pick="mon" data-field="' + f.name + '">📋</button>';
@@ -233,7 +382,7 @@ async function openQuest(idx) {
       nm = '<span class="hintv" id="nm-' + f.name + '">' + (f.hint || '') + '</span>';
     }
     return '<div class="frow"><label>' + f.name + '</label>' +
-      '<input type="number" data-field="' + f.name + '" value="' + v + '" />' + btn + nm + '</div>';
+      '<input data-field="' + f.name + '" value="' + disp + '"' + numAttrs(f) + ' />' + btn + nm + '</div>';
   }).join('');
 
   $('sheet').innerHTML =
@@ -246,8 +395,8 @@ async function openQuest(idx) {
     '<button id="save" style="width:100%">💾 保存此任务</button>' +
     '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
     '</div>';
-  $('overlay').classList.add('show');
-  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+  showOverlay();
+  $('cancel').onclick = function () { hideOverlay(); };
   $('save').onclick = function () { saveOne(idx); };
 
   // 选择按钮
@@ -296,8 +445,7 @@ async function saveOne(idx) {
   var changes = [];
   inputs.forEach(function (el) {
     var f = Quest.fieldByName(el.dataset.field); if (!f) return;
-    var val = parseInt(el.value, 10);
-    if (isNaN(val)) return;
+    var val = clampFieldVal(f, el.value);   // ← 夹到字段范围（防超限写坏内存）
     changes.push({ off: f.off, size: f.size, value: val });
   });
   var btn = $('save');
@@ -346,7 +494,7 @@ function buildBatchValueRow(f, val) {
     extra = '<span class="hintv">' + (f.hint || '') + '</span>';
   }
   return '<div class="frow"><label>改成</label>' +
-    '<input type="number" id="bValue" value="' + val + '" />' + extra + '</div>';
+    '<input id="bValue" value="' + toSigned(val, f.size) + '"' + numAttrs(f) + ' />' + extra + '</div>';
 }
 
 /** 绑定"改成"行的选择器按钮 + 手改提示 */
@@ -404,8 +552,8 @@ function openBatch() {
     '<button id="bGo" class="warn" style="width:100%">⚡ 开始批量修改</button>' +
     '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
     '</div>';
-  $('overlay').classList.add('show');
-  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+  showOverlay();
+  $('cancel').onclick = function () { hideOverlay(); };
 
   // 切换字段 → 重建"改成"行
   function rebuildValueRow() {
@@ -427,7 +575,7 @@ async function doBatch() {
   if (_busy) return;
   var f = Quest.fieldByName($('bField').value);
   if (!f) { toast('字段无效'); return; }
-  var value = parseInt($('bValue').value, 10) || 0;
+  var value = clampFieldVal(f, $('bValue').value);   // ← 夹到字段范围
   var inc = $('bInc').checked;   // 逐个累加
   var idxs;
   if ($('bRange').value === 'ids') {
@@ -484,7 +632,7 @@ async function doBatch() {
   }
   busy(btn, false);
   setBusy(false);              // 先解锁，load() 里要检查 _busy
-  $('overlay').classList.remove('show');
+  hideOverlay();
   // 文件模式不重新读内存，只刷新列表
   if (Store.getMode() === 'file') { ALL = Store.validTasks(); render(); }
   else load();   // 重新拉取
@@ -538,7 +686,8 @@ function findEmptySlots() {
 }
 
 async function openAdd(slot) {
-  if (slot === undefined) {
+  // ⚠️ 按钮点击时 slot 收到的是 MouseEvent 对象，必须过滤成合法数字
+  if (typeof slot !== 'number' || isNaN(slot)) {
     slot = findEmptySlot();
     if (slot < 0) {
       toast('没有空位了，请先删除一些任务', 4000);
@@ -565,27 +714,33 @@ async function buildAddSheet(slot) {
   } catch (e) { /* 读失败就按全 0 填 */ }
 
   // 每个字段的初值：用遗留数据；但 序号/编号/叹号 是"删除标记"，给合理默认
+  // 🔢 「序号」默认用"序号计数器"当前值（跟游戏一致：游戏获得新怪异任务时也取用该值）
+  var seqNow = Store.getSeqCounter();
+  var seqDefault = (seqNow === null || seqNow === undefined) ? 1 : (seqNow >>> 0);
+  // 🏷 「编号」默认 = 700000 + 空槽索引（实测规律：195/195 个非空槽都满足 编号==700000+槽）
+  //     但保留可手动改（万一规律有个别例外，用户能纠正）
+  var idDefault = STRUCT.TASK_ID_BASE + slot;
   function initVal(f) {
     if (f.name === '序号') {
-      var s = q['序号'];
-      return (s === undefined || s === 0xFFFFFFFF) ? 1 : s;
+      return seqDefault;   // ← 自动填计数器当前值（可手动改）
     }
     if (f.name === '编号') {
+      // 万一同槽位的遗留数据里已有"合法且匹配当前槽"的编号，就用它；否则用规律值
       var n = q['编号'];
-      // 编号被删标记占用了 → 给一个未用的编号
-      if (n === undefined || n === 0xFFFFFFFF || isNaN(n)) return nextFreeId();
-      return n;
+      if (typeof n === 'number' && n !== 0xFFFFFFFF && !isNaN(n) && n === idDefault) return n;
+      return idDefault;    // ← 700000 + 槽索引（可手动改）
     }
     if (f.name === '叹号') {
-      var e = q['叹号'];
-      return (e === undefined || e === 256) ? 0 : e;
+      // ❗「叹号」= 新任务标记，添加新任务时一律默认 1（不沿用它槽的遗留数据）
+      return 1;
     }
     var v = q[f.name];
     return (v === undefined || v === null) ? 0 : v;
   }
 
   var rows = FIELDS.map(function (f) {
-    var v = initVal(f);
+    var v = initVal(f);                                    // 无符号位模式（用于查表）
+    var disp = (f.size === 4 || f.size === 1) ? toSigned(v, f.size) : v;   // 有符号（用于显示）
     var btn = '', nm = '';
     if (f.kind === 'mon') {
       btn = '<button class="pick" data-pick="mon" data-field="' + f.name + '">📋</button>';
@@ -600,7 +755,7 @@ async function buildAddSheet(slot) {
       nm = '<span class="hintv" id="anm-' + f.name + '">' + (f.hint || '') + '</span>';
     }
     return '<div class="frow"><label>' + f.name + '</label>' +
-      '<input type="number" data-afield="' + f.name + '" value="' + v + '" />' + btn + nm + '</div>';
+      '<input data-afield="' + f.name + '" value="' + disp + '"' + numAttrs(f) + ' />' + btn + nm + '</div>';
   }).join('');
 
   var empty = findEmptySlots();
@@ -615,6 +770,8 @@ async function buildAddSheet(slot) {
     '<div class="sub" id="addSlotAddr">地址 ' +
       (BASE + slot * 0x74).toString(16).toUpperCase() + '</div>' +
     '<div class="hint" style="margin:0 0 12px">📥 <b>已读取该空槽遗留数据</b>，请在此基础上修改。<br>' +
+    '🔢 <b>「序号」已自动填当前计数器值 ' + seqDefault + '</b>（游戏获得新怪异任务时也是取用该值），写入成功后会 +1 并写回游戏。<br>' +
+    '🏷 <b>「编号」已自动填 ' + idDefault + '</b>（= 700000 + 槽索引 ' + slot + '），也可手动改。<br>' +
     '💡 改「空槽索引」或点 📋 换槽 → 会重新读遗留数据。<br>' +
     '🐉 点怪物 📋 选择 → 自动带等级（怪1用主等级，怪2~5/乱入用副等级）。</div>' +
     '<div class="sec">字段（可改）</div>' + rows +
@@ -622,8 +779,8 @@ async function buildAddSheet(slot) {
     '<button id="addSave" style="width:100%">💾 写入该空槽</button>' +
     '<button class="ghost" id="cancel" style="margin-top:8px;width:100%">取消</button>' +
     '</div>';
-  $('overlay').classList.add('show');
-  $('cancel').onclick = function () { $('overlay').classList.remove('show'); };
+  showOverlay();
+  $('cancel').onclick = function () { hideOverlay(); };
   $('addSave').onclick = function () { saveAdd(parseInt($('addSlot').value, 10)); };
 
   // 换槽：手动改索引（失焦时生效）
@@ -677,7 +834,9 @@ function renderSlotPicker(kw) {
   });
 }
 
-/** 找一个未被使用的编号（700000 起） */
+/** 找一个未被使用的编号（700000 起）
+ *  备注：实测规律是"编号 == 700000 + 槽索引"，所以添加任务时通常直接用
+ *        STRUCT.TASK_ID_BASE + slot 即可；本函数保留作后备（如规律有例外时）。 */
 function nextFreeId() {
   var used = {};
   for (var i = 0; i < ALL.length; i++) used[ALL[i]['编号']] = true;
@@ -706,8 +865,7 @@ async function saveAdd(slot) {
   var changes = [], vmap = {};
   inputs.forEach(function (el) {
     var f = Quest.fieldByName(el.dataset.afield); if (!f) return;
-    var val = parseInt(el.value, 10);
-    if (isNaN(val)) val = 0;
+    var val = clampFieldVal(f, el.value);   // ← 夹到字段范围
     vmap[f.name] = val;
     changes.push({ off: f.off, size: f.size, value: val });
   });
@@ -727,22 +885,42 @@ async function saveAdd(slot) {
     if (Store.getMode() === 'file') {
       // 文件模式：本地写（把空槽变成有效任务）
       Store.setSlotFields(slot, changes);
-      toast('✅ 已添加到文件（索引 ' + slot + '，编号 ' + num + '）', 3000);
+      await bumpSeqCounter();   // 🔢 计数器 +1（只改本地）
+      toast('✅ 已添加到文件（索引 ' + slot + '，编号 ' + num + '）序号已 +1', 3000);
       busy(btn, false);
-      $('overlay').classList.remove('show');
+      hideOverlay();
       refreshFromStore();
       return;
     }
     if (!BASE) BASE = await Quest.questBase();
     var r = await Quest.setQuestFields(BASE, slot, changes);
-    if (r.ok) toast('✅ 已写入空槽 ' + slot + '（编号 ' + num + '）', 3000);
-    else toast('⚠️ 写入后校验不一致，请检查', 4000);
+    if (r.ok) {
+      await bumpSeqCounter();   // 🔢 计数器 +1（在线：写回 Switch）
+      toast('✅ 已写入空槽 ' + slot + '（编号 ' + num + '）序号已 +1', 3000);
+    } else toast('⚠️ 写入后校验不一致，请检查', 4000);
   } catch (e) {
     toast('❌ 写入失败：' + e.message, 4000);
   }
   busy(btn, false);
-  $('overlay').classList.remove('show');
+  hideOverlay();
   load();
+}
+
+/** 🔢 序号计数器 +1（在线写回 Switch；文件模式只改本地） */
+async function bumpSeqCounter() {
+  var cur = Store.getSeqCounter();
+  if (cur === null || cur === undefined) return;
+  var next = (cur + 1) >>> 0;
+  if (Store.getMode() === 'file') {
+    Store.setSeqCounter(next);          // 只改本地（导出文件里带上）
+    updateSeqStat();
+    return;
+  }
+  try {
+    var ok = await Quest.writeSeqCounter(next);   // 写回 Switch
+    Store.setSeqCounter(ok ? next : cur);
+    updateSeqStat();
+  } catch (e) { /* 写失败就保持原值 */ }
 }
 
 // ---------- 导出 / 导入（备份 & 分享）----------
@@ -778,12 +956,22 @@ function tsName() {
 /** 上传到游戏：把当前数据（含文件编辑的）写进 Switch 内存 */
 async function doWriteBack() {
   if (_busy) return;
-  if (Store.getMode() === 'file') {
-    toast('⚠️ 当前是文件模式，上传需要连上 Switch。请先点「🔄 读取游戏任务」');
-    return;
-  }
   var slots = Store.getSlots();
   if (!slots.length) { toast('没有数据'); return; }
+
+  // ⚠️ 上传只看"Switch 是否连上"，与数据来源（文件/在线）无关
+  //    （以前这里错误地检查 Store.getMode()==='file' 就拦住，导致"打开了文件就传不回去"）
+  try {
+    var st = await Bridge.status();
+    if (!st.connected) {
+      toast('⚠️ 没连上 Switch。请确认：中转已启动 + 游戏已开 + 设置里的地址正确');
+      return;
+    }
+  } catch (e) {
+    toast('⚠️ 连不上中转：' + e.message + '（请先启动中转服务）', 4500);
+    return;
+  }
+
   if (!confirm('把当前 ' + slots.length + ' 个任务全部上传到游戏吗？\n\n⚠️ 会覆盖游戏里的任务！\n（大块写入，约 1~3 秒）')) return;
   setBusy(true);
   var btn = $('writeBackBtn');
@@ -792,7 +980,8 @@ async function doWriteBack() {
   pb.querySelector('.pbar-txt').textContent = '大块写入中…';
   pb.querySelector('.pbar-fill').style.width = '30%';
   try {
-    if (!BASE) BASE = await Quest.questBase();
+    BASE = await Quest.questBase();   // 上传必须重新定位（ASLR）
+    if (!BASE) throw new Error('定位任务数组失败（游戏没开？）');
     var ok = await Quest.writeAllRaw(slots, function (c, t) {});
     pb.querySelector('.pbar-fill').style.width = '100%';
     pb.classList.remove('show');
@@ -803,7 +992,9 @@ async function doWriteBack() {
   }
   busy(btn, false);
   setBusy(false);
-  load();
+  // 上传后：按当前数据源刷新（file 模式保持文件数据，不强行读回游戏）
+  if (Store.getMode() === 'online') load();
+  else refreshFromStore();
 }
 
 // 给"字段行"统一绑定 📋 选择器（前缀用于区分单任务编辑/添加）
@@ -922,8 +1113,8 @@ function cfgAddr() {
     '<button class="ghost" id="cfgTestBtn" style="margin-top:8px;width:100%">🔍 测试连接</button>' +
     '<button class="ghost" id="cfgCancel" style="margin-top:8px;width:100%">取消</button>' +
     '</div>';
-  $('overlay').classList.add('show');
-  $('cfgCancel').onclick = function () { $('overlay').classList.remove('show'); };
+  showOverlay();
+  $('cfgCancel').onclick = function () { hideOverlay(); };
   $('cfgTestBtn').onclick = testCfg;
   $('cfgSave').onclick = function () {
     var u = ($('cfgUrl').value || '').trim();
@@ -931,7 +1122,7 @@ function cfgAddr() {
     if (!/^https?:\/\//.test(u)) u = 'http://' + u;         // 自动补协议
     if (!/:\d+$/.test(u)) u = u.replace(/\/+$/, '') + ':8080'; // 没端口补 8080
     Bridge.setBase(u);
-    $('overlay').classList.remove('show');
+    hideOverlay();
     toast('已保存：' + u);
     load();
   };
@@ -997,15 +1188,16 @@ document.addEventListener('DOMContentLoaded', function () {
   $('search').addEventListener('input', render);
   $('sort').addEventListener('change', render);
   bind('reload', load);
-  bind('addBtn', openAdd);
+  bind('addBtn', function () { openAdd(); });   // ⚠️ 不传事件对象，让 openAdd 自己找第一个空槽
   bind('batch', openBatch);
   bind('exportBtn', doExport);
   bind('openBtn', openDataFile);
   bind('writeBackBtn', doWriteBack);
   bind('cfgBtn', cfgAddr);
+  bind('seqStat', editSeqCounter);
 
   $('overlay').addEventListener('click', function (e) {
-    if (e.target.id === 'overlay') $('overlay').classList.remove('show');
+    if (e.target.id === 'overlay') hideOverlay();
   });
   $('picker').addEventListener('click', function (e) {
     if (e.target.id === 'picker') $('picker').classList.remove('show');

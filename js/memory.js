@@ -81,30 +81,48 @@ var Mem = (function () {
     var r = await Bridge.cmd('peek 0x' + off.toString(16).toUpperCase() + ' ' + n);
     return hexToBytes(r);
   }
-
-  /** 相对 NSO 读 n 字节 -> Uint8Array */
+/** 相对 NSO 读 n 字节 -> Uint8Array */
   async function peekMain(off, n) {
     var r = await Bridge.cmd('peekMain 0x' + off.toString(16).toUpperCase() + ' ' + n);
     return hexToBytes(r);
   }
 
-  /** 按绝对地址读（自动判断 heap / NSO） */
+  /** 相对 heap 写（off 是相对 heap 的偏移） */
+  async function pokeHeap(off, data) {
+    await Bridge.cmd('poke 0x' + off.toString(16).toUpperCase() + ' 0x' + bytesToHex(data));
+  }
+
+  /** 相对 NSO 写（off 是相对 main NSO 的偏移）—— 注意 poke 数据必须带 0x 前缀！ */
+  async function pokeMain(off, data) {
+    await Bridge.cmd('pokeMain 0x' + off.toString(16).toUpperCase() + ' 0x' + bytesToHex(data));
+  }
+
+
+  /** 按绝对地址读（自动判断 heap / NSO）
+   *  ⚠️ peek 的参数是【相对 heap 的偏移】，peekMain 的参数是【相对 main NSO 的偏移】
+   *     （源码里会各自 + heap_base / + main_nso_base），所以要减去对应 base。
+   */
   async function readAbs(addr, n) {
     var hb = await getHeapBase();
     if (hb && addr >= hb && addr < hb + 0x40000000) {
       return await peekHeap(addr - hb, n);
     }
-    return await peekMain(addr, n);
+    var mb = await getMainBase();
+    return await peekMain(addr - mb, n);
   }
 
-  /** 按绝对地址写（data 是 Uint8Array）——自动补 0x 前缀！ */
+  /** 按绝对地址写（data 是 Uint8Array）——自动补 0x 前缀！
+   *  ⚠️ 注意：poke 的参数是【相对 heap 的偏移】，pokeMain 的参数是【相对 main NSO 的偏移】
+   *     （源码里会各自 + heap_base / + main_nso_base），所以这里要减去对应 base。
+   */
   async function writeAbs(addr, data) {
     var hb = await getHeapBase();
     var hexs = '0x' + bytesToHex(data);  // ⚠️ 必须带 0x！
     if (hb && addr >= hb && addr < hb + 0x40000000) {
       await Bridge.cmd('poke 0x' + (addr - hb).toString(16).toUpperCase() + ' ' + hexs);
     } else {
-      await Bridge.cmd('pokeMain 0x' + addr.toString(16).toUpperCase() + ' ' + hexs);
+      var mb = await getMainBase();
+      await Bridge.cmd('pokeMain 0x' + (addr - mb).toString(16).toUpperCase() + ' ' + hexs);
     }
   }
 
@@ -128,7 +146,8 @@ var Mem = (function () {
       if (hb && a >= hb && a < hb + 0x40000000) {
         piece = await peekHeap(a - hb, thisLen);
       } else {
-        piece = await peekMain(a, thisLen);
+        var mb1 = await getMainBase();
+        piece = await peekMain(a - mb1, thisLen);   // ⚠️ peekMain 要偏移（减 mainBase）
       }
       if (!piece || piece.length === 0) break;
       out.set(piece.subarray(0, Math.min(piece.length, n - got)), got);
@@ -151,7 +170,8 @@ var Mem = (function () {
       if (hb && a >= hb && a < hb + 0x40000000) {
         await Bridge.cmd('poke 0x' + (a - hb).toString(16).toUpperCase() + ' ' + hexs);
       } else {
-        await Bridge.cmd('pokeMain 0x' + a.toString(16).toUpperCase() + ' ' + hexs);
+        var mb2 = await getMainBase();
+        await Bridge.cmd('pokeMain 0x' + (a - mb2).toString(16).toUpperCase() + ' ' + hexs);  // ⚠️ 减 mainBase
       }
       done += thisLen;
     }
@@ -169,6 +189,8 @@ var Mem = (function () {
     resetCache: resetCache,
     peekHeap: peekHeap,
     peekMain: peekMain,
+    pokeHeap: pokeHeap,
+    pokeMain: pokeMain,
     readAbs: readAbs,
     writeAbs: writeAbs,
     readRange: readRange,

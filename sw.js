@@ -5,9 +5,14 @@
  *   - 离线/断网时仍能打开上次缓存的页面（至少能看到界面）。
  * 注意：SW 只在 HTTPS 或 localhost 下才会被浏览器注册。
  *       http://192.168.x.x 打开时浏览器会拒绝注册（代码里已做容错）。
+ *
+ * ⚠️ CACHE 里的版本号由 botbase/_inline.py 自动写入（读 js/data.js 的 APP_VERSION）。
+ *    发新版后跑一次 python3 botbase/_inline.py，缓存名就会自动跟着变，
+ *    activate 时会自动清掉上一版的缓存。
+ *    手改版本号没用——会被 _inline.py 覆盖。
  * ============================================================ */
 
-const CACHE = 'anomaly-forge-v1';
+const CACHE = 'anomaly-forge-v1.0.0';
 const ASSETS = [
   './',
   './index.html',
@@ -50,16 +55,33 @@ self.addEventListener('fetch', (event) => {
   // 中转命令接口不缓存
   if (url.pathname === '/cmd' || url.pathname.endsWith('/cmd')) return;
 
+  // 手动"检查更新"时带的 _t 参数 → 直接走网络，不落缓存
+  const bypass = url.searchParams.has('_t');
+
   event.respondWith(
     fetch(req)
       .then((res) => {
-        // 成功后顺手更新缓存
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+        if (!bypass) {
+          // 成功后顺手更新缓存
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(req, copy)).catch(() => {});
+        }
         return res;
       })
       .catch(() =>
         caches.match(req).then((hit) => hit || caches.match('./index.html'))
       )
   );
+});
+
+// 消息：来自页面的"更新"操作 → 清掉旧缓存（配合 skipWaiting）
+self.addEventListener('message', (event) => {
+  const data = event.data || {};
+  if (data.type === 'skip-waiting-clear') {
+    event.waitUntil(
+      caches.keys()
+        .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
+        .then(() => self.skipWaiting())
+    );
+  }
 });

@@ -11,6 +11,36 @@ var Bridge = (function () {
   var DEFAULT = 'http://127.0.0.1:6001';
   var base = localStorage.getItem('bridge') || DEFAULT;
 
+  // 默认请求超时（毫秒）—— 连不上中转时不至于永远挂起
+  var TIMEOUT = 12000;
+  // 全局"取消令牌"：用户点"取消"时 abort 掉进行中的请求
+  var _controller = null;
+
+  /** 开始一次可取消的操作（返回 signal） */
+  function beginCancelable() {
+    cancel();                 // 若上一次还开着，先取消
+    _controller = new AbortController();
+    return _controller.signal;
+  }
+  /** 取消当前操作（abort 正在进行的 fetch）
+   *  ⚠️ 不置 null：保留"已 abort"的 signal，后续请求会立刻失败 → 循环快速退出 */
+  function cancel() {
+    if (_controller) {
+      try { _controller.abort(); } catch (e) {}
+      // 故意不移除 _controller：它现在处于 aborted 状态，
+      // 之后任何 command 都会立即抛错（避免"取消后又继续读"）
+    }
+  }
+  /** 操作结束后调用：清掉取消态，恢复正常 */
+  function endCancelable() {
+    _controller = null;
+  }
+  /** 生成 signal：优先用传入的，其次用全局可取消的 */
+  function signalOf(sig) {
+    if (sig) return sig;
+    return _controller ? _controller.signal : undefined;
+  }
+
   // 迁移：早期版本可能存过 8080 / localhost 等旧地址 → 自动升级到新默认值
   (function migrate() {
     if (!base) { base = DEFAULT; return; }
@@ -26,16 +56,55 @@ var Bridge = (function () {
     return base.replace(/\/+$/, '') + path;
   }
 
+  /** 带超时的 fetch（超时或取消都会抛错） */
+  function fetchT(u, opt, timeoutMs, sig) {
+    var ms = timeoutMs === undefined ? TIMEOUT : timeoutMs;
+    opt = opt || {};
+    var signal = signalOf(sig);
+    // 组合：外部 signal + 超时
+    var ctrl = null, timer = null;
+    if (!signal) {
+      // 没有外部 signal → 自己造一个（用于超时）
+      ctrl = new AbortController();
+      signal = ctrl.signal;
+    } else if (ms > 0) {
+      // 有外部 signal，也要能超时 → 再造一个把两者串起来
+      ctrl = new AbortController();
+      var ext = signal;
+      if (ext.addEventListener) {
+        if (ext.aborted) ctrl.abort();
+        else ext.addEventListener('abort', function () { ctrl.abort(); }, { once: true });
+      }
+      signal = ctrl.signal;
+    }
+    if (ms > 0) {
+      timer = setTimeout(function () {
+        if (ctrl) ctrl.abort();
+      }, ms);
+    }
+    opt.signal = signal;
+    return fetch(u, opt).then(function (r) {
+      if (timer) clearTimeout(timer);
+      return r;
+    }, function (e) {
+      if (timer) clearTimeout(timer);
+      if (e && (e.name === 'AbortError')) {
+        throw new Error(ctrl && ctrl.signal.reason === 'timeout' ? '请求超时' : '已取消');
+      }
+      throw e;
+    });
+  }
+
   /** 探活：返回 {ok, connected, ip, port} */
-  async function status() {
-    var r = await fetch(url('/status'));
+  async function status(sig) {
+    var r = await fetchT(url('/status'), {}, 6000, sig);
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return await r.json();
   }
 
   /** 发一条原始 sys-botbase 命令，返回回复文本（已 trim） */
-  async function cmd(s) {
-    var r = await fetch(url('/cmd'), { method: 'POST', body: s });
+  async function cmd(s, sig, timeoutMs) {
+    var r = await fetchT(url('/cmd'), { method: 'POST', body: s }, timeoutMs, sig);
     var t = await r.text();
     if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
     return t.trim();
@@ -59,6 +128,9 @@ var Bridge = (function () {
     cmd: cmd,
     setTarget: setTarget,
     getBase: getBase,
-    setBase: setBase
+    setBase: setBase,
+    beginCancelable: beginCancelable,
+    cancel: cancel,
+    endCancelable: endCancelable
   };
 })();

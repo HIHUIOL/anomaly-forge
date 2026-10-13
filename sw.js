@@ -12,7 +12,7 @@
  *    手改版本号没用——会被 _inline.py 覆盖。
  * ============================================================ */
 
-const CACHE = 'anomaly-forge-v1.0.0';
+const CACHE = 'anomaly-forge-v1.12.3';
 const ASSETS = [
   './',
   './index.html',

@@ -275,7 +275,7 @@
  * ============================================================ */
 
 // ---------- 应用版本号（改这里即可；标题栏会显示）----------
-var APP_VERSION = 'v1.28.0';
+var APP_VERSION = 'v1.36.0';
 
 // ---------- 怪物 ID 表（完整 ID，非低字节）----------
 var MONSTERS = {
@@ -3573,30 +3573,55 @@ function renderScriptPanel() {
   h += '<div class="hint" style="margin:0 0 10px">' +
     '<b>⚠️ 按键会真的操作游戏，请先在村口/野外安全位置。</b></div>';
 
-  // ---- 📦 送道具 ----
-  h += '<div class="sec" style="margin-top:14px">📦 送道具</div>';
+  // ---- 🔁 循环送（常用，放最上面）----
+  h += '<div class="sec" style="margin-top:14px">🔁 循环送</div>';
+  h += '<div class="frow">' +
+    '<label>次数</label>' +
+    '<input id="sdLoopN" type="number" value="0" min="0" max="99999" style="width:90px">' +
+    '<span class="hint" style="margin-left:8px">轮数；0=无限循环</span>' +
+    '</div>';
+  h += '<div class="frow">' +
+    '<label>段1键速</label>' +
+    '<input id="sdKeyWait" type="number" value="50" min="20" max="500" style="width:80px">' +
+    '<span class="hint" style="margin-left:8px">毫秒（段1+送出按键等待；第一个固定100ms=开菜单动画，其余用这个值）</span>' +
+    '</div>';
+  h += '<div class="frow">' +
+    '<label>送给</label>' +
+    '<select id="sdAutoWho" style="width:140px">' +
+    '<option value="1" selected>第 1 个玩家</option>' +
+    '<option value="2">第 2 个玩家</option>' +
+    '<option value="3">第 3 个玩家</option>' +
+    '</select>' +
+    '</div>';
+  h += '<div style="display:flex;gap:8px;margin:8px 0 4px">' +
+    '<button id="sdLoopGo" style="flex:1">🔁 开始循环送</button>' +
+    '<button id="sdLoopStop" class="ghost warn" style="flex:1">⏹ 停止循环</button>' +
+    '</div>';
+  h += '<div style="display:flex;gap:8px;margin:0 0 4px">' +
+    '<button id="sdPressB" class="ghost" style="flex:1">🅱 按一下B</button>' +
+    '<button id="sdShot" class="ghost" style="flex:1">📷 截当前画面</button>' +
+    '</div>';
+
+  h += '<div class="hint" id="sdStat" style="text-align:center;font-family:monospace;min-height:1.4em;margin:6px 0">' +
+    '未开始</div>';
+
+  // ---- 🎯 目标道具（常用，放上面）----
+  // ⚡ 不再显示"目标ID 输入框"，只显示"材料名"；ID 存在隐藏 input 里
+  h += '<div class="frow" style="margin-top:10px">' +
+    '<label>材料</label>' +
+    '<span id="sdIdName" style="flex:1;color:#3fb950;font-weight:bold">—</span>' +
+    '<button id="sdPick" class="ghost" style="margin-left:6px">🔍 选道具</button>' +
+    '</div>';
+  h += '<input id="sdId" type="hidden" value="0x04100B96">';
+
+  // ---- 📦 送道具（分步调试，放下面）----
+  h += '<div class="sec" style="margin-top:18px">📦 送道具（分步调试）</div>';
   h += '<div class="hint" style="margin:0 0 10px">' +
     '原理：先把第 1 格写成<b>可送道具</b>（龙骨小），走到"选数量界面"后' +
     '<b>改成目标道具</b>，绕过"不可送"检查。' +
     '</div>';
 
-  // ---- 📦 送道具（分步调试）----
-  h += '<div class="sec" style="margin-top:18px">📦 送道具（分步调试）</div>';
-  h += '<div class="hint" style="margin:0 0 10px">' +
-    '原理：先把第 1 格写成<b>可送道具</b>（龙骨小），走到"选数量界面"后' +
-    '<b>改成目标道具</b>，绕过"不可送"检查。<br>' +
-    '<b>⚠️ 按键会真的操作游戏，请先在村口/野外安全位置。</b>' +
-    '</div>';
-
-  h += '<div class="frow">' +
-    '<label>目标ID</label>' +
-    '<input id="sdId" value="0x04100B96" placeholder="0x04100B96" ' +
-    'style="flex:1;min-width:140px">' +
-    '<button id="sdPick" class="ghost" style="margin-left:6px">🔍 选道具</button>' +
-    '</div>';
-  h += '<div class="hint" id="sdIdName" style="margin:2px 0 0 0;color:#3fb950"></div>';
-
-h += '<div style="display:flex;flex-direction:column;gap:8px;margin:10px 0">' +
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin:10px 0">' +
     '<button data-sd="prep">1️⃣ 写第 1 格 = 龙骨【小】×99</button>' +
     '<button data-sd="seg1">2️⃣ 段1：PLUS→…→选数量界面</button>' +
     '<button data-sd="swap">3️⃣ 改 ID → 目标道具</button>' +
@@ -3616,39 +3641,10 @@ h += '<div style="display:flex;flex-direction:column;gap:8px;margin:10px 0">' +
     '<button data-sd="peek">5️⃣ 读第 1 格状态</button>' +
     '</div>';
 
-  h += '<div class="frow">' +
-    '<label>一键给</label>' +
-    '<select id="sdAutoWho" style="width:140px">' +
-    '<option value="1" selected>第 1 个玩家</option>' +
-    '<option value="2">第 2 个玩家</option>' +
-    '<option value="3">第 3 个玩家</option>' +
-    '</select>' +
-    '</div>';
-h += '<div style="display:flex;gap:8px;margin:6px 0">' +
+  h += '<div style="display:flex;gap:8px;margin:6px 0">' +
     '<button id="sdAuto" style="flex:1">🚀 一键送一个</button>' +
     '<button id="sdStop" class="ghost warn" style="flex:1">⏹ 中断</button>' +
     '</div>';
-
-  // ---- 🔁 循环送 ----
-  h += '<div class="sec" style="margin-top:16px">🔁 循环送</div>';
-  h += '<div class="frow">' +
-    '<label>次数</label>' +
-    '<input id="sdLoopN" type="number" value="0" min="0" max="99999" style="width:90px">' +
-    '<span class="hint" style="margin-left:8px">轮数；0=无限循环</span>' +
-    '</div>';
-  h += '<div class="frow">' +
-    '<label>段1键速</label>' +
-    '<input id="sdKeyWait" type="number" value="50" min="20" max="500" style="width:80px">' +
-    '<span class="hint" style="margin-left:8px">毫秒（段1+送出按键等待；第一个固定100ms=开菜单动画，其余用这个值）</span>' +
-    '</div>';
-  h += '<div style="display:flex;gap:8px;margin:8px 0 4px">' +
-    '<button id="sdLoopGo" style="flex:1">🔁 开始循环送</button>' +
-    '<button id="sdLoopStop" class="ghost warn" style="flex:1">⏹ 停止循环</button>' +
-    '</div>';
-
-  h += '<div class="hint" id="sdStat" style="text-align:center;font-family:monospace;min-height:1.4em">' +
-    '未开始</div>';
-
 
   h += '<div class="hint" style="margin-top:14px;opacity:.7">' +
     '⚠️ 按键会<b>真的操作游戏</b>，请先站在安全位置（野外）再测。</div>';
@@ -3718,14 +3714,14 @@ h += '<div style="display:flex;gap:8px;margin:6px 0">' +
     return '0x' + (id >>> 0).toString(16).toUpperCase().padStart(8, '0');
   }
 
-  /** 刷新"目标ID 下方显示的名字" */
+  /** 刷新"材料"名字（读隐藏 sdId 的值）*/
   function sdRefreshIdName() {
     var el = $('sdIdName');
     if (!el) return;
     var raw = ($('sdId') ? $('sdId').value : '').trim();
-    if (!raw) { el.textContent = ''; return; }
+    if (!raw) { el.textContent = '—'; el.style.color = '#8b949e'; return; }
     var nm = (typeof itemName === 'function') ? itemName(raw) : null;
-    el.textContent = nm ? ('📦 ' + nm) : '⚠️ 未知道具（表里没有）';
+    el.textContent = nm ? nm : ('⚠️ 未知道具 ' + raw);
     el.style.color = nm ? '#3fb950' : '#f0883e';
   }
 
@@ -3778,14 +3774,14 @@ h += '<div style="display:flex;gap:8px;margin:6px 0">' +
         }
       }
       h += '<div style="padding:6px 8px;font-weight:bold;color:#8b949e;margin-top:6px">' +
-           '全部道具（' + (typeof itemCount === 'function' ? itemCount() : '?') + '，最多显示 200）</div>';
+           '全部道具（' + (typeof itemCount === 'function' ? itemCount() : '?') + '）</div>';
     } else {
       h += '<div style="padding:6px 8px;font-weight:bold;color:#8b949e">' +
            '搜索结果</div>';
     }
 
-    // 列表（无搜索：前 200 条；有搜索：命中前 200）
-    var list = (typeof itemSearch === 'function') ? itemSearch(kw, 200) : [];
+    // 列表（全部显示；有搜索则显示全部命中）
+    var list = (typeof itemSearch === 'function') ? itemSearch(kw, 99999) : [];
     if (list.length === 0) {
       h += '<div style="padding:6px 12px;opacity:.6">（没有匹配的道具）</div>';
     } else {
@@ -3842,13 +3838,12 @@ h += '<div style="display:flex;gap:8px;margin:6px 0">' +
     var se = $('sdPickSearch');
     se.oninput = function () { sdRenderPickerList(); };
     sdRenderPickerList();
-    se.focus();
+    // ⚡ 不自动聚焦（避免手机一打开就弹输入法）
   }
 
   // 绑定"选道具"按钮 + ID 输入框实时刷新名字
   if ($('sdPick')) $('sdPick').onclick = function () { sdOpenPicker(); };
-  if ($('sdId')) $('sdId').oninput = function () { sdRefreshIdName(); };
-  sdRefreshIdName();   // ⚡ 打开面板时，立刻显示当前 ID 的名字
+  sdRefreshIdName();   // ⚡ 打开面板时，立刻显示当前材料名
 
   /** 解析目标 ID（支持 0x 前缀 / 十进制）*/
   function sdParseId() {
@@ -4212,6 +4207,72 @@ h += '<div style="display:flex;gap:8px;margin:6px 0">' +
     _sdStopFlag = true;   // ⚡ 让"等领取"立刻中断
     try { Quest.pressCancel(); } catch (e) {}
     sdOut('⏹ 已请求停止（立即中断）', '#f0883e');
+  };
+
+  // ⚡ "按一下B"按钮（点一下 = 在 Switch 上按一次 B）
+  if ($('sdPressB')) $('sdPressB').onclick = async function () {
+    var btn = $('sdPressB');
+    if (btn) btn.disabled = true;
+    try {
+      await Quest.pressKey('B');
+      sdOut('🅱 已按一下 B', '#3fb950');
+    } catch (e) {
+      sdOut('❌ 按 B 失败：' + e.message, '#f85149');
+      toast('❌ ' + e.message, 3000);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  };
+
+  /** 关闭截图窗口 */
+  function sdCloseShot() {
+    var ov = $('sdShotOverlay');
+    if (ov) { URL.revokeObjectURL(ov._url); ov.remove(); }
+  }
+
+  // ⚡ "截当前画面"按钮（复用 Quest.captureScreen，不依赖中转额外接口）
+  if ($('sdShot')) $('sdShot').onclick = async function () {
+    var btn = $('sdShot');
+    if (btn) btn.disabled = true;
+    sdOut('📷 正在截图…', '#f0883e');
+    try {
+      var bytes = await Quest.captureScreen();   // ⚡ 现成函数：pixelPeek → JPEG 字节
+      var blob = new Blob([bytes], { type: 'image/jpeg' });
+      var url = URL.createObjectURL(blob);
+
+      // 弹窗显示
+      var ov = document.createElement('div');
+      ov.id = 'sdShotOverlay';
+      ov._url = url;
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.85);' +
+        'z-index:99999;display:flex;align-items:center;justify-content:center;padding:12px';
+      ov.innerHTML =
+        '<div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;' +
+        'max-width:96vw;max-height:92vh;display:flex;flex-direction:column;overflow:hidden">' +
+        '<div style="display:flex;align-items:center;gap:8px;padding:10px 12px;' +
+        'border-bottom:1px solid #30363d">' +
+        '<b style="flex:1">📷 Switch 画面（' + Math.round(bytes.length / 1024) + ' KB）</b>' +
+        '<a href="' + url + '" download="switch_' + Date.now() + '.jpg" ' +
+        'style="padding:4px 10px;text-decoration:none">⬇ 保存</a>' +
+        '<button id="sdShotClose" class="ghost" style="padding:4px 10px">✕</button>' +
+        '</div>' +
+        '<div style="overflow:auto">' +
+        '<img src="' + url + '" style="display:block;max-width:92vw;max-height:78vh"></div>' +
+        '</div>';
+      document.body.appendChild(ov);
+
+      $('sdShotClose').onclick = function () { sdCloseShot(); };
+      ov.addEventListener('click', function (ev) {
+        if (ev.target === ov) sdCloseShot();
+      });
+
+      sdOut('✅ 截图完成（' + Math.round(bytes.length / 1024) + ' KB）', '#3fb950');
+    } catch (e) {
+      sdOut('❌ 截图失败：' + e.message, '#f85149');
+      toast('❌ 截图失败：' + e.message, 4000);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   };
 
   $('sdLoopGo').onclick = async function () {

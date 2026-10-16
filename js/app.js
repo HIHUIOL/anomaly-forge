@@ -2628,8 +2628,9 @@ async function buildAddSheet(slot) {
       return idDefault;    // ← 700000 + 槽索引（可手动改）
     }
     if (f.name === '叹号') {
-      // ❗「叹号」= 新任务标记，添加新任务时一律默认 1（不沿用它槽的遗留数据）
-      return 1;
+      // ❗「叹号」= 新任务标记，添加新任务时默认 0（= 不显示新任务叹号）
+      //    0=无 / 1=有 / 256=空槽（见 data.js 的「新任务叹号」枚举）
+      return 0;
     }
     var v = q[f.name];
     return (v === undefined || v === null) ? 0 : v;

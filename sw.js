@@ -12,13 +12,14 @@
  *    手改版本号没用——会被 _inline.py 覆盖。
  * ============================================================ */
 
-const CACHE = 'anomaly-forge-v1.12.3';
+const CACHE = 'anomaly-forge-v1.28.0';
 const ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
   './icon.svg',
-  './icon-maskable.svg'
+  './icon-maskable.svg',
+  './js/items.js'
 ];
 
 // 安装：预缓存核心资源

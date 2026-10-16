@@ -394,6 +394,46 @@ var Quest = (function () {
     return parseInt(t, 16);   // 源码是 printf("%02X")，hex 格式
   }
 
+  // ============================================================
+  // 🎮 按键 / 摇杆（sys-botbase）
+  // ============================================================
+
+  /** 按一下某个键（click）—— Switch 不回数据，中转短等待 */
+  async function pressKey(key) {
+    return await Bridge.cmd('click ' + key);
+  }
+
+  /** 播放一段按键序列（clickSeq）
+   *  seq 例：'DUP,W200,DUP,W200,DDOWN'
+   *  ⚠️ 命令立即返回，序列在 Switch 端异步执行
+   */
+  async function pressSeq(seq) {
+    return await Bridge.cmd('clickSeq ' + seq);
+  }
+
+  /** ⚡ 播放一段按键序列，并"等它真的播完"（Switch 播完回 done）
+   *  返回 { ok, ms }（ms = 实际耗时毫秒）
+   */
+  async function pressSeqWait(seq, timeoutMs) {
+    return await Bridge.cmdWait('clickSeq ' + seq, null, timeoutMs);
+  }
+
+  /** 中断正在播放的序列 */
+  async function pressCancel() {
+    return await Bridge.cmd('clickCancel');
+  }
+
+  /** 摇杆：side = 'left' | 'right'，范围 -32767 ~ 32767 */
+  async function setStick(side, x, y) {
+    var s = (side === 'right') ? 'right' : 'left';
+    return await Bridge.cmd('setStick ' + s + ' ' + (x | 0) + ' ' + (y | 0));
+  }
+
+  /** 调整 click 时按键的按住时长（毫秒）—— 帧率低时调大点更好识别 */
+  async function setClickHold(ms) {
+    return await Bridge.cmd('configure buttonClickSleepTime ' + (ms | 0));
+  }
+
   /** 截取当前 Switch 屏幕 —— 返回 JPEG 的 Uint8Array
    *  sys-botbase 的 pixelPeek 会返回一整张 JPEG 的 hex（约 70 万字符 / 350KB）
    */
@@ -581,6 +621,13 @@ var Quest = (function () {
     clearManyQuests: clearManyQuests,
     restoreManyQuests: restoreManyQuests,
     captureScreen: captureScreen,
+    // 🎮 按键 / 摇杆
+    pressKey: pressKey,
+    pressSeq: pressSeq,
+    pressSeqWait: pressSeqWait,
+    pressCancel: pressCancel,
+    setStick: setStick,
+    setClickHold: setClickHold,
     cheatDefs: cheatDefs,
     cheatDef: cheatDef,
     cheatStatus: cheatStatus,

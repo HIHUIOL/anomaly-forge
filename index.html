@@ -275,7 +275,7 @@
  * ============================================================ */
 
 // ---------- 应用版本号（改这里即可；标题栏会显示）----------
-var APP_VERSION = 'v1.12.3';
+var APP_VERSION = 'v1.28.0';
 
 // ---------- 怪物 ID 表（完整 ID，非低字节）----------
 var MONSTERS = {
@@ -405,6 +405,8 @@ var STRUCT = {
   SEQ_COUNTER_DELTA: 0x34
 };
 </script>
+<!-- ===== items.js ===== -->
+<script src="./js/items.js"></script>
 <!-- ===== cheats.js ===== -->
 <script>
 /* ============================================================
@@ -675,6 +677,19 @@ var Bridge = (function () {
     return t.trim();
   }
 
+  /** ⚡ 发命令并"等到 Switch 回 done"（给 clickSeq 用）
+   *  返回 { ok: true/false, ms: 耗时毫秒, raw: 原文 }
+   */
+  async function cmdWait(s, sig, timeoutMs) {
+    var ms = timeoutMs === undefined ? 30000 : timeoutMs;   // 等 done 给长超时
+    var r = await fetchT(url('/cmdwait'), { method: 'POST', body: s }, ms, sig);
+    var t = await r.text();
+    if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
+    t = t.trim();
+    var parts = t.split(/\s+/);
+    return { ok: parts[0] === 'done', ms: parseInt(parts[1] || '0', 10) || 0, raw: t };
+  }
+
   /** 修改 Switch 目标 */
   async function setTarget(ip, port) {
     var r = await fetch(url('/config'), {
@@ -691,6 +706,7 @@ var Bridge = (function () {
   return {
     status: status,
     cmd: cmd,
+    cmdWait: cmdWait,
     setTarget: setTarget,
     getBase: getBase,
     setBase: setBase,
@@ -1300,6 +1316,46 @@ var Quest = (function () {
     return parseInt(t, 16);   // 源码是 printf("%02X")，hex 格式
   }
 
+  // ============================================================
+  // 🎮 按键 / 摇杆（sys-botbase）
+  // ============================================================
+
+  /** 按一下某个键（click）—— Switch 不回数据，中转短等待 */
+  async function pressKey(key) {
+    return await Bridge.cmd('click ' + key);
+  }
+
+  /** 播放一段按键序列（clickSeq）
+   *  seq 例：'DUP,W200,DUP,W200,DDOWN'
+   *  ⚠️ 命令立即返回，序列在 Switch 端异步执行
+   */
+  async function pressSeq(seq) {
+    return await Bridge.cmd('clickSeq ' + seq);
+  }
+
+  /** ⚡ 播放一段按键序列，并"等它真的播完"（Switch 播完回 done）
+   *  返回 { ok, ms }（ms = 实际耗时毫秒）
+   */
+  async function pressSeqWait(seq, timeoutMs) {
+    return await Bridge.cmdWait('clickSeq ' + seq, null, timeoutMs);
+  }
+
+  /** 中断正在播放的序列 */
+  async function pressCancel() {
+    return await Bridge.cmd('clickCancel');
+  }
+
+  /** 摇杆：side = 'left' | 'right'，范围 -32767 ~ 32767 */
+  async function setStick(side, x, y) {
+    var s = (side === 'right') ? 'right' : 'left';
+    return await Bridge.cmd('setStick ' + s + ' ' + (x | 0) + ' ' + (y | 0));
+  }
+
+  /** 调整 click 时按键的按住时长（毫秒）—— 帧率低时调大点更好识别 */
+  async function setClickHold(ms) {
+    return await Bridge.cmd('configure buttonClickSleepTime ' + (ms | 0));
+  }
+
   /** 截取当前 Switch 屏幕 —— 返回 JPEG 的 Uint8Array
    *  sys-botbase 的 pixelPeek 会返回一整张 JPEG 的 hex（约 70 万字符 / 350KB）
    */
@@ -1487,6 +1543,13 @@ var Quest = (function () {
     clearManyQuests: clearManyQuests,
     restoreManyQuests: restoreManyQuests,
     captureScreen: captureScreen,
+    // 🎮 按键 / 摇杆
+    pressKey: pressKey,
+    pressSeq: pressSeq,
+    pressSeqWait: pressSeqWait,
+    pressCancel: pressCancel,
+    setStick: setStick,
+    setClickHold: setClickHold,
     cheatDefs: cheatDefs,
     cheatDef: cheatDef,
     cheatStatus: cheatStatus,
@@ -1853,7 +1916,7 @@ var _busy = false;   // 全局忙碌锁：读取/写入期间禁止重复操作
 /** 禁用/启用一组按钮 */
 function setBusy(on) {
   _busy = on;
-  var ids = ['reload', 'addBtn', 'batch', 'exportBtn', 'openBtn', 'writeBackBtn', 'cfgBtn', 'shotBtn', 'swapBtn', 'cheatBtn'];
+  var ids = ['reload', 'addBtn', 'batch', 'exportBtn', 'openBtn', 'writeBackBtn', 'cfgBtn', 'shotBtn', 'swapBtn', 'cheatBtn', 'scriptBtn'];
   for (var i = 0; i < ids.length; i++) {
     var b = $(ids[i]);
     if (b) b.disabled = on;
@@ -3486,6 +3549,738 @@ window.openCheat = function () {
   renderCheatPanel().catch(function (e) { toast('打开失败：' + e.message, 4000); });
 };
 
+// ============================================================
+// 🧪 脚本（按键测试 / 自动化）
+// ============================================================
+var _scriptTimer = null;     // setTimeout / setInterval 句柄
+var _scriptRunning = false;  // 是否在跑
+var _scriptCount = 0;        // 已发送次数
+var _scriptFails = 0;        // 连续失败次数
+// ⚡ 第 1 格地址的全局缓存（关面板也不丢；游戏重启 heapBase 变化才失效）
+var _SD_ADDR = 0;
+var _SD_ADDR_HB = 0;
+var _sdStopFlag = false;   // ⚡ "停止"标志：让"等领取"循环立刻中断
+
+/** 渲染「脚本」面板 */
+function renderScriptPanel() {
+  var h = '<h2>📦 送道具</h2>' +
+    '<div class="sub">绕过"不可送"限制：先把第 1 格写成可送道具，走到"选数量界面"后改成目标道具。</div>';
+
+  if (Store.getMode() === 'file') {
+    h += '<div class="hint">⚠️ 当前是<b>文件模式</b>，需要连上 Switch（在线模式）才能用。</div>';
+  }
+
+  h += '<div class="hint" style="margin:0 0 10px">' +
+    '<b>⚠️ 按键会真的操作游戏，请先在村口/野外安全位置。</b></div>';
+
+  // ---- 📦 送道具 ----
+  h += '<div class="sec" style="margin-top:14px">📦 送道具</div>';
+  h += '<div class="hint" style="margin:0 0 10px">' +
+    '原理：先把第 1 格写成<b>可送道具</b>（龙骨小），走到"选数量界面"后' +
+    '<b>改成目标道具</b>，绕过"不可送"检查。' +
+    '</div>';
+
+  // ---- 📦 送道具（分步调试）----
+  h += '<div class="sec" style="margin-top:18px">📦 送道具（分步调试）</div>';
+  h += '<div class="hint" style="margin:0 0 10px">' +
+    '原理：先把第 1 格写成<b>可送道具</b>（龙骨小），走到"选数量界面"后' +
+    '<b>改成目标道具</b>，绕过"不可送"检查。<br>' +
+    '<b>⚠️ 按键会真的操作游戏，请先在村口/野外安全位置。</b>' +
+    '</div>';
+
+  h += '<div class="frow">' +
+    '<label>目标ID</label>' +
+    '<input id="sdId" value="0x04100B96" placeholder="0x04100B96" ' +
+    'style="flex:1;min-width:140px">' +
+    '<button id="sdPick" class="ghost" style="margin-left:6px">🔍 选道具</button>' +
+    '</div>';
+  h += '<div class="hint" id="sdIdName" style="margin:2px 0 0 0;color:#3fb950"></div>';
+
+h += '<div style="display:flex;flex-direction:column;gap:8px;margin:10px 0">' +
+    '<button data-sd="prep">1️⃣ 写第 1 格 = 龙骨【小】×99</button>' +
+    '<button data-sd="seg1">2️⃣ 段1：PLUS→…→选数量界面</button>' +
+    '<button data-sd="swap">3️⃣ 改 ID → 目标道具</button>' +
+    '</div>';
+
+  h += '<div class="sec" style="margin-top:10px">4️⃣ 数量调满 + 送出（选玩家）</div>';
+  h += '<div class="hint" style="margin:0 0 8px">' +
+    '从"选数量界面"开始：按 下 调满 → A 确认 → 选玩家 → A 送出。' +
+    '</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin:8px 0">' +
+    '<button data-sd="send1">4️⃣-A 送给【第 1 个玩家】</button>' +
+    '<button data-sd="send2">4️⃣-B 送给【第 2 个玩家】（下）</button>' +
+    '<button data-sd="send3">4️⃣-C 送给【第 3 个玩家】（上）</button>' +
+    '</div>';
+
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin:8px 0">' +
+    '<button data-sd="peek">5️⃣ 读第 1 格状态</button>' +
+    '</div>';
+
+  h += '<div class="frow">' +
+    '<label>一键给</label>' +
+    '<select id="sdAutoWho" style="width:140px">' +
+    '<option value="1" selected>第 1 个玩家</option>' +
+    '<option value="2">第 2 个玩家</option>' +
+    '<option value="3">第 3 个玩家</option>' +
+    '</select>' +
+    '</div>';
+h += '<div style="display:flex;gap:8px;margin:6px 0">' +
+    '<button id="sdAuto" style="flex:1">🚀 一键送一个</button>' +
+    '<button id="sdStop" class="ghost warn" style="flex:1">⏹ 中断</button>' +
+    '</div>';
+
+  // ---- 🔁 循环送 ----
+  h += '<div class="sec" style="margin-top:16px">🔁 循环送</div>';
+  h += '<div class="frow">' +
+    '<label>次数</label>' +
+    '<input id="sdLoopN" type="number" value="0" min="0" max="99999" style="width:90px">' +
+    '<span class="hint" style="margin-left:8px">轮数；0=无限循环</span>' +
+    '</div>';
+  h += '<div class="frow">' +
+    '<label>段1键速</label>' +
+    '<input id="sdKeyWait" type="number" value="50" min="20" max="500" style="width:80px">' +
+    '<span class="hint" style="margin-left:8px">毫秒（段1+送出按键等待；第一个固定100ms=开菜单动画，其余用这个值）</span>' +
+    '</div>';
+  h += '<div style="display:flex;gap:8px;margin:8px 0 4px">' +
+    '<button id="sdLoopGo" style="flex:1">🔁 开始循环送</button>' +
+    '<button id="sdLoopStop" class="ghost warn" style="flex:1">⏹ 停止循环</button>' +
+    '</div>';
+
+  h += '<div class="hint" id="sdStat" style="text-align:center;font-family:monospace;min-height:1.4em">' +
+    '未开始</div>';
+
+
+  h += '<div class="hint" style="margin-top:14px;opacity:.7">' +
+    '⚠️ 按键会<b>真的操作游戏</b>，请先站在安全位置（野外）再测。</div>';
+
+  $('sheet').innerHTML = h;
+  showOverlay();
+  // 关闭面板时自动停掉循环（防"关了还在按"）
+  _overlayCloseHook = function () {
+    scriptStopAll();
+    try { Quest.pressCancel(); } catch (e) {}
+  };
+
+  // ============================================================
+  // 📦 送道具
+  // ============================================================
+  var sdOut = function (t, c) {
+    var el = $('sdStat');
+    if (el) { el.textContent = t; el.style.color = c || ''; }
+  };
+
+  // ============================================================
+  // 🔍 道具选择器（弹窗 + 收藏 + 搜索）
+  // ============================================================
+  var SD_FAV_KEY = 'sd_item_fav_v1';
+  // ⚡ 预置收藏（十进制 ID）＝ 浓龙血 / 迅炼丹 / 精气琥珀・真
+  var SD_FAV_DEFAULT = [68160406, 68159442, 68160358];
+
+  /** 读收藏列表（localStorage；首次用预置值）*/
+  function sdFavList() {
+    try {
+      var s = localStorage.getItem(SD_FAV_KEY);
+      if (s == null) {
+        localStorage.setItem(SD_FAV_KEY, JSON.stringify(SD_FAV_DEFAULT));
+        return SD_FAV_DEFAULT.slice();
+      }
+      var a = JSON.parse(s);
+      if (!Array.isArray(a)) return SD_FAV_DEFAULT.slice();
+      return a.map(function (x) { return parseInt(x, 10); })
+              .filter(function (x) { return isFinite(x) && x > 0; });
+    } catch (e) {
+      return SD_FAV_DEFAULT.slice();
+    }
+  }
+  /** 存收藏列表 */
+  function sdFavSave(a) {
+    try { localStorage.setItem(SD_FAV_KEY, JSON.stringify(a)); } catch (e) {}
+  }
+  /** 是否已收藏 */
+  function sdFavHas(id) {
+    var a = sdFavList();
+    for (var i = 0; i < a.length; i++) if (a[i] === id) return true;
+    return false;
+  }
+  /** 切换收藏 */
+  function sdFavToggle(id) {
+    var a = sdFavList();
+    var idx = -1;
+    for (var i = 0; i < a.length; i++) if (a[i] === id) { idx = i; break; }
+    if (idx >= 0) a.splice(idx, 1);
+    else a.unshift(id);
+    sdFavSave(a);
+    return idx < 0;   // true = 刚加上收藏
+  }
+
+  /** 十进制 ID → "0x04100B96" */
+  function sdHex(id) {
+    return '0x' + (id >>> 0).toString(16).toUpperCase().padStart(8, '0');
+  }
+
+  /** 刷新"目标ID 下方显示的名字" */
+  function sdRefreshIdName() {
+    var el = $('sdIdName');
+    if (!el) return;
+    var raw = ($('sdId') ? $('sdId').value : '').trim();
+    if (!raw) { el.textContent = ''; return; }
+    var nm = (typeof itemName === 'function') ? itemName(raw) : null;
+    el.textContent = nm ? ('📦 ' + nm) : '⚠️ 未知道具（表里没有）';
+    el.style.color = nm ? '#3fb950' : '#f0883e';
+  }
+
+  /** 选中某个道具（写回 sdId）*/
+  function sdPickItem(id) {
+    if ($('sdId')) { $('sdId').value = sdHex(id); }
+    sdRefreshIdName();
+    sdClosePicker();
+  }
+
+  /** 关闭弹窗 */
+  function sdClosePicker() {
+    var ov = $('sdPickOverlay');
+    if (ov) ov.remove();
+  }
+
+  /** 一行道具的 HTML */
+  function sdRowHtml(id, name) {
+    var fav = sdFavHas(id);
+    return '<div class="sd-pr" data-id="' + id + '" style="display:flex;' +
+      'align-items:center;gap:8px;padding:7px 8px;border-bottom:1px solid #21262d">' +
+      '<span class="sd-star" data-star="' + id + '" style="cursor:pointer;' +
+      'font-size:16px;width:20px;text-align:center">' + (fav ? '⭐' : '☆') + '</span>' +
+      '<span class="sd-pick" data-pick="' + id + '" style="flex:1;cursor:pointer">' +
+      name + '</span>' +
+      '<span class="sd-pick" data-pick="' + id + '" style="cursor:pointer;opacity:.6;' +
+      'font-family:monospace;font-size:12px">' + sdHex(id) + '</span>' +
+      '</div>';
+  }
+
+  /** 重新渲染弹窗内部列表（搜索 / 收藏）*/
+  function sdRenderPickerList() {
+    var host = $('sdPickerList');
+    if (!host) return;
+    var kw = ($('sdPickSearch') ? $('sdPickSearch').value : '').trim();
+    var h = '';
+
+    if (!kw) {
+      // ⭐ 收藏区
+      var favs = sdFavList();
+      h += '<div style="padding:6px 8px;font-weight:bold;color:#f0c674">' +
+           '⭐ 收藏（' + favs.length + '）</div>';
+      if (favs.length === 0) {
+        h += '<div style="padding:6px 12px;opacity:.6">（还没收藏，点左边 ☆ 加）</div>';
+      } else {
+        for (var i = 0; i < favs.length; i++) {
+          var fid = favs[i];
+          var fnm = (typeof itemName === 'function') ? (itemName(fid) || '未知') : '未知';
+          h += sdRowHtml(fid, fnm);
+        }
+      }
+      h += '<div style="padding:6px 8px;font-weight:bold;color:#8b949e;margin-top:6px">' +
+           '全部道具（' + (typeof itemCount === 'function' ? itemCount() : '?') + '，最多显示 200）</div>';
+    } else {
+      h += '<div style="padding:6px 8px;font-weight:bold;color:#8b949e">' +
+           '搜索结果</div>';
+    }
+
+    // 列表（无搜索：前 200 条；有搜索：命中前 200）
+    var list = (typeof itemSearch === 'function') ? itemSearch(kw, 200) : [];
+    if (list.length === 0) {
+      h += '<div style="padding:6px 12px;opacity:.6">（没有匹配的道具）</div>';
+    } else {
+      for (var j = 0; j < list.length; j++) {
+        h += sdRowHtml(list[j].id, list[j].name);
+      }
+    }
+    host.innerHTML = h;
+
+    // 绑定"点星"和"点道具"
+    host.querySelectorAll('[data-star]').forEach(function (el) {
+      el.onclick = function (ev) {
+        ev.stopPropagation();
+        var id = parseInt(el.getAttribute('data-star'), 10);
+        sdFavToggle(id);
+        sdRenderPickerList();
+      };
+    });
+    host.querySelectorAll('[data-pick]').forEach(function (el) {
+      el.onclick = function () {
+        var id = parseInt(el.getAttribute('data-pick'), 10);
+        sdPickItem(id);
+      };
+    });
+  }
+
+  /** 打开"选道具"弹窗 */
+  function sdOpenPicker() {
+    if ($('sdPickOverlay')) return;   // 已开
+    var ov = document.createElement('div');
+    ov.id = 'sdPickOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.72);' +
+      'z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML =
+      '<div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;' +
+      'width:100%;max-width:520px;max-height:86vh;display:flex;flex-direction:column;' +
+      'overflow:hidden">' +
+      '<div style="display:flex;align-items:center;gap:8px;padding:12px 14px;' +
+      'border-bottom:1px solid #30363d">' +
+      '<b style="flex:1">📦 选择道具</b>' +
+      '<button id="sdPickClose" class="ghost" style="padding:4px 10px">✕</button>' +
+      '</div>' +
+      '<div style="padding:10px 14px;border-bottom:1px solid #21262d">' +
+      '<input id="sdPickSearch" placeholder="🔍 输入名字/ID 搜索…" ' +
+      'style="width:100%;padding:8px;box-sizing:border-box"></div>' +
+      '<div id="sdPickerList" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch"></div>' +
+      '</div>';
+    document.body.appendChild(ov);
+
+    $('sdPickClose').onclick = function () { sdClosePicker(); };
+    // 点遮罩空白处关闭
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) sdClosePicker(); });
+
+    var se = $('sdPickSearch');
+    se.oninput = function () { sdRenderPickerList(); };
+    sdRenderPickerList();
+    se.focus();
+  }
+
+  // 绑定"选道具"按钮 + ID 输入框实时刷新名字
+  if ($('sdPick')) $('sdPick').onclick = function () { sdOpenPicker(); };
+  if ($('sdId')) $('sdId').oninput = function () { sdRefreshIdName(); };
+  sdRefreshIdName();   // ⚡ 打开面板时，立刻显示当前 ID 的名字
+
+  /** 解析目标 ID（支持 0x 前缀 / 十进制）*/
+  function sdParseId() {
+    var s = ($('sdId') ? $('sdId').value : '').trim();
+    if (!s) throw new Error('目标ID 为空');
+    var v = /^0x/i.test(s) ? parseInt(s, 16) : parseInt(s, 10);
+    if (!isFinite(v) || v <= 0) throw new Error('目标ID 不合法：' + s);
+    return v >>> 0;
+  }
+
+  /** 解析"第 1 格"的物品格地址（指针链 + 0x10）
+   *  ⚡ 全局缓存：算过一次后一直复用，直到游戏重启（heapBase 变化）
+   *  force=true 强制重算
+   */
+  async function sdAddr(force) {
+    // heapBase / mainBase 在 Mem 里是"只请求一次 + 永久缓存"，这里不花钱
+    var hb = await Mem.getHeapBase();
+    if (!force && _SD_ADDR && _SD_ADDR_HB === hb) {
+      return _SD_ADDR;   // ⚡ 0 次网络请求
+    }
+    var mb = await Mem.getMainBase();
+    // p1 = u64(main + 0x12A54228)
+    var b1 = await Mem.peekMain(0x12A54228, 8);
+    var p1 = Mem.u64(b1, 0);
+    if (!p1) throw new Error('指针1 为 0');
+    // p2 = u64(p1 + 0x678)
+    var b2 = await Mem.readAbs(p1 + 0x678, 8);
+    var p2 = Mem.u64(b2, 0);
+    // p3 = u64(p2 + 0x40)
+    var b3 = await Mem.readAbs(p2 + 0x40, 8);
+    var p3 = Mem.u64(b3, 0);
+    // p4 = u64(p3 + 0x20)
+    var b4 = await Mem.readAbs(p3 + 0x20, 8);
+    var p4 = Mem.u64(b4, 0);
+    var addr = p4 + 0x10;   // ⚠️ 最终 +0x10
+    _SD_ADDR = addr;
+    _SD_ADDR_HB = hb;
+    return addr;
+  }
+
+  /** 读第 1 格 [ID, 数量] */
+  async function sdReadCell() {
+    var addr = await sdAddr();
+    var b = await Mem.readAbs(addr, 8);
+    return { addr: addr, id: Mem.u32(b, 0), qty: Mem.u32(b, 4) };
+  }
+
+  /** ⚡ 读"赠送/接收状态"：main+0x12B28C50 → p → p+0x58
+   *  = 1 → 正在送（对方还没领）
+   *  = 0 → 没在送（领完 / 未开始）
+   */
+  var _SD_SEND_P = 0;    // 指针缓存
+  var _SD_SEND_P_HB = 0;
+  async function sdSendState(force) {
+    var hb = await Mem.getHeapBase();
+    if (force || !_SD_SEND_P || _SD_SEND_P_HB !== hb) {
+      // p1 = u64(main + 0x12B28C50)
+      var b1 = await Mem.peekMain(0x12B28C50, 8);
+      var p = Mem.u64(b1, 0);
+      if (!p) throw new Error('赠送状态指针为 0');
+      _SD_SEND_P = p;
+      _SD_SEND_P_HB = hb;
+    }
+    // 读 p + 0x58（heap 偏移 = p + 0x58 - heapBase）
+    var b2 = await Mem.peekHeap(_SD_SEND_P + 0x58 - hb, 4);
+    return Mem.u32(b2, 0);
+  }
+
+  /** 写第 1 格 ID / 数量（合并成一次 8 字节写）*/
+  async function sdWriteCell(id, qty) {
+    var addr = await sdAddr();
+    var buf = new Uint8Array(8);
+    Mem.putU32(buf, 0, id >>> 0);
+    Mem.putU32(buf, 4, qty >>> 0);
+    await Mem.writeAbs(addr, buf);
+    return addr;
+  }
+
+  /** 全局：上一次"送出序列"的预计播放时长（ms），供"等领取"宽容窗口用 */
+  var _sdLastSendMs = 200;
+
+  /** 发一条序列并"等它真的播完"（Switch 播完回 done）
+   *  ⚡ 由中转的 /cmdwait 实现，精确知道播完时刻（不再靠估算）
+   *  extraWait != null 时，播完后再额外等 extraWait ms（保险）
+   */
+  async function sdSeq(seq, extraWait) {
+    var t0 = Date.now();
+    var r = await Quest.pressSeqWait(seq, 60000);   // ⚡ 等 done，最多 60 秒
+    var sentMs = Date.now() - t0;                   // ⚡ 实际耗时（= 播放时长 + 网络）
+    var extra = (extraWait && extraWait > 0) ? extraWait : 0;
+    if (extra > 0) {
+      await new Promise(function (r2) { setTimeout(r2, extra); });
+    }
+    return { sentMs: sentMs, waitMs: extra, played: r.ok, switchMs: r.ms };
+  }
+
+  /** 估算一条序列的"播放总时长"（每键 50ms + Wxxx 累加） */
+  function sdSeqMs(seq) {
+    var ms = 0;
+    var parts = String(seq).split(',');
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i].trim();
+      if (/^W\d+$/i.test(p)) ms += parseInt(p.slice(1), 10);
+      else ms += 50;
+    }
+    return ms;
+  }
+
+  /** 生成"送出"序列（who='1'/'2'/'3'）
+   *  - 等待全部用"段1键速"（w），跟"段1"保持一致
+   *  - 开头 W0：立刻按 DD 调数量（与"写内存改ID"重叠）
+   */
+  function sdBuildSendSeq(who) {
+    var w = sdKeyWaitMs();   // ⚡ 统一用"段1键速"
+    var pick = '';
+    if (who === '2') pick = 'W' + w + ',DD';
+    else if (who === '3') pick = 'W' + w + ',DUP';
+    // 只有 who='1' 时"不需要选玩家"，其它要选
+    var head = 'W0,DD,W' + w + ',A';
+    var tail = (who === '1') ? ',W' + w + ',A' : (',' + pick + ',W' + w + ',A');
+    return head + tail;
+  }
+
+  /** 读"段1键速"（默认 50，最小 20）—— 段1 和 送出 共用 */
+  function sdKeyWaitMs() {
+    var w = parseInt($('sdKeyWait') ? $('sdKeyWait').value : '50', 10);
+    if (isNaN(w) || w < 20) w = 50;
+    return w;
+  }
+
+  /** 生成"段1"序列
+   *  - 第一个 W100 固定（等"打开菜单"的动画）
+   *  - 其余全部用"段1键速"（越小越快）
+   */
+  function sdBuildSeg1() {
+    var w = sdKeyWaitMs();
+    // PLUS, W100(固定), A, Ww, A, Ww, A, Ww, DD, Ww, A
+    return 'PLUS,W100,A,W' + w + ',A,W' + w + ',A,W' + w + ',DD,W' + w + ',A';
+  }
+
+  // 各步定义
+  var SD_PREP_ID = 0x041001A1;     // 龙骨【小】
+  var SD_PREP_QTY = 99;
+
+  /** 每步的执行体 */
+  async function sdRun(kind) {
+    if (kind === 'prep') {
+      var a = await sdWriteCell(SD_PREP_ID, SD_PREP_QTY);
+      return '✅ 已写 龙骨【小】×99 @0x' + a.toString(16).toUpperCase();
+    }
+    if (kind === 'seg1') {
+      // ⚡ 直接"等 Switch 回 done"（= 按键真的播完），不再猜时常
+      var r1 = await sdSeq(sdBuildSeg1());
+      // ⚡ 顺手预热地址缓存（后台，不阻塞返回）
+      sdAddr().catch(function () {});
+      return '✅ 段1 播完（实际 ' + r1.sentMs + 'ms' +
+             (r1.played ? '' : '，⚠️ 未收到 done') + '）';
+    }
+    if (kind === 'swap') {
+      var id = sdParseId();
+      var addr = await sdAddr();          // ⚡ 有缓存，通常 0 请求
+      var buf = new Uint8Array(4);
+      Mem.putU32(buf, 0, id);
+      var t0 = Date.now();
+      await Mem.writeAbs(addr, buf);      // ⚠️ 只写 ID（4 字节），不碰数量
+      return '✅ ID → 0x' + id.toString(16).toUpperCase() +
+             ' @0x' + addr.toString(16).toUpperCase() +
+             '（' + (Date.now() - t0) + 'ms）';
+    }
+    if (kind === 'send1' || kind === 'send2' || kind === 'send3') {
+      // 从"选数量界面"开始：
+      //   W0   → 立刻按 DD（与"写内存改ID"重叠）
+      //   DD   → 数量调满
+      //   A    → 确认数量（进入"选玩家界面"）
+      //   [选玩家] → 第1个: 直接 A / 第2个: DD→A / 第3个: DUP→A
+      //   A    → 送出
+      // ⚡ 不等待播放（由"等领取"环节的 p+0x58 判断送达）
+      var who2 = (kind === 'send1' ? '1' : (kind === 'send2' ? '2' : '3'));
+      var full = sdBuildSendSeq(who2);
+      _sdLastSendMs = sdSeqMs(full);       // ⚡ 记录本次送出序列时长（供等领取宽容窗口）
+      var t0s = Date.now();
+      await Quest.pressSeq(full);          // ⚡ 发完立刻返回（不等 done）
+      return '✅ 送出命令已发出（给第 ' + who2 + ' 个玩家）（发命令 ' +
+             (Date.now() - t0s) + 'ms，不等播放）';
+    }
+    if (kind === 'peek') {
+      var c = await sdReadCell();
+      var nm = (typeof itemName === 'function') ? itemName(c.id) : '';
+      var head = (!c.id || c.id === 0x04000000)
+        ? '📭 第1格【空】'
+        : ('📦 0x' + (c.id >>> 0).toString(16).toUpperCase() + ' ×' + c.qty + (nm ? (' ' + nm) : ''));
+      // ⚡ 顺便读"赠送状态"
+      var st = '?';
+      try { st = await sdSendState(); } catch (e) { st = '读失败(' + e.message + ')'; }
+      return head + '  ｜ 赠送状态 p+0x58 = ' + st + '（1=正在送/0=没在送）';
+    }
+    throw new Error('未知步骤 ' + kind);
+  }
+
+  // 绑定 6 个分步按钮
+  $('sheet').querySelectorAll('button[data-sd]').forEach(function (btn) {
+    btn.onclick = async function () {
+      var kind = btn.dataset.sd;
+      btn.disabled = true;
+      sdOut('⏳ ' + btn.textContent.trim() + ' …', '#f0883e');
+      try {
+        var msg = await sdRun(kind);
+        sdOut(msg, '#3fb950');
+      } catch (e) {
+        sdOut('❌ ' + e.message, '#f85149');
+        toast('❌ ' + e.message, 4000);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+  });
+
+  // 中断序列
+  $('sdStop').onclick = async function () {
+    _sdStopFlag = true;   // ⚡ 让"等领取"立刻中断
+    try { await Quest.pressCancel(); sdOut('⏹ 已发中断', '#f0883e'); }
+    catch (e) { toast('❌ ' + e.message, 3000); }
+  };
+
+  /** 是否为空格 */
+  function sdIsEmpty(cell) {
+    return (!cell.id || cell.id === 0x04000000);
+  }
+
+  /** 完整送一次：prep → seg1 → swap → send → 等对方领走
+   *  onStep(msg) 显示进度
+   *  opts.waitClaim = true 时，轮询直到"数量减少"（对方领了）才返回
+   *  opts.maxWait  = 最长等待毫秒（默认 15000）
+   *  返回 {ok, msg}
+   */
+  async function sdOneShot(onStep, opts) {
+    opts = opts || {};
+    var who = ($('sdAutoWho') ? $('sdAutoWho').value : '1');
+    var step = onStep || function () {};
+
+    step('1️⃣ 写第1格…');
+    await sdRun('prep');
+
+    step('2️⃣ 走到选数量界面…');
+    await sdRun('seg1');   // ⚡ 内部等 done（按键真的播完）
+
+    step('3️⃣+4️⃣ 改ID + 送出（重叠）…');
+    // ⚡ 重叠：写内存（改ID）和"发按键序列"并行
+    //    - 序列开头 W0（不等），写内存与"按键播放"重叠
+    //    - ⚠️ 不等待序列播完（不等 done）—— 直接进第 5 步轮询 p+0x58
+    var sendSeq2 = sdBuildSendSeq(who);         // 生成送出序列（开头 W0）
+    _sdLastSendMs = sdSeqMs(sendSeq2);           // ⚡ 记录时长（供等领取宽容窗口）
+    var swP = sdRun('swap');                     // ① 启动写内存（不 await）
+    await Quest.pressSeq(sendSeq2);              // ② 发序列（立即返回，不等播放）
+    await swP;                                   // ③ 确保写内存完成了
+    var swMsg = 'ID 已改';
+
+    if (!opts.waitClaim) {
+      return { ok: true, msg: '已送出（未等待领取）' };
+    }
+
+    // ⚡ 用"赠送状态"指针判断：p+0x58 = 1 正在送 / 0 没在送
+    //    ⚠️ 4️⃣ 不等待序列播放，所以要"宽容窗口"：
+    //       送出序列开头 W0，约需 sendMs（序列播放）后才可能变 1；窗口内读到 0 不算数
+    step('5️⃣ 等对方领取…');
+    var t0 = Date.now();
+    var maxWait = opts.maxWait || 15000;
+    var pollMs = opts.pollMs == null ? 0 : opts.pollMs;
+    var reads = 0;
+    var errs = 0;
+    var lastErr = '';
+    var sawOne = false;                       // 是否见过 =1
+    // ⚠️ 宽容窗口：4️⃣ 不等待序列播放，播出序列约 sendMs 后才可能变 1
+    //    sendMs 取自"本次实际发的送出序列时长"（全局记录，兼容手动/一键）
+    var sendMs = (typeof _sdLastSendMs === 'number' && _sdLastSendMs > 0) ? _sdLastSendMs : 650;
+    var graceUntil = t0 + sendMs + 400;       // 这段时间内读到 0 不算数
+    var zeroStreak = 0;                        // ⚡ 连续读到 0 的次数（仅"没见过1"时累计）
+    var ZERO_LIMIT = 6;                        // ⚡ 连续 0 达到这个数 → 判"没送出去"
+    while (true) {                             // ⚡ 改成无限循环（不再靠 maxWait 退出）
+      if (opts.shouldStop && opts.shouldStop()) {
+        throw new Error('用户手动停止');
+      }
+      if (!sawOne && Date.now() - t0 > maxWait) {
+        // ⚠️ 只有"从未见过 1"时，才用 maxWait 兜底退出（防止永远读不到）
+        return { ok: false, msg: '⚠️ ' + (maxWait / 1000) + ' 秒内一直没见到"正在送"' +
+                 '（可能没送出去），读了 ' + reads + ' 次' };
+      }
+      await new Promise(function (r) { setTimeout(r, pollMs); });
+      var st;
+      try {
+        st = await sdSendState();
+      } catch (e) {
+        errs++;
+        lastErr = e.message;
+        step('5️⃣ 读状态失败 ' + errs + ' 次：' + lastErr);
+        continue;
+      }
+      reads++;
+      if (st === 1) {
+        sawOne = true;
+        zeroStreak = 0;                        // ⚡ 见到 1 → 清零连续 0 计数
+        step('5️⃣ 第' + reads + '次：状态=1（正在送，等对方领…）');
+      } else {
+        // st === 0
+        if (sawOne) {
+          // ⚡ 见过 1，又变 0 → 对方领了
+          return { ok: true, msg: '📭 状态 1→0 → 对方领了（读了 ' + reads + ' 次）' };
+        }
+        if (Date.now() < graceUntil) {
+          // ⚠️ 还在"送出序列播放"的宽容窗口内 → 这 0 不算数，继续等
+          step('5️⃣ 第' + reads + '次：状态=0（序列可能还在播，继续等…）');
+        } else {
+          zeroStreak++;
+          if (zeroStreak >= ZERO_LIMIT) {
+            // ⚠️ 宽容窗口已过，且连续多次都是 0 → 确实"没送出去"
+            return { ok: false, msg: '⚠️ 送出后连续 ' + zeroStreak + ' 次读到 0' +
+                     '（可能对方背包满/送失败），读了 ' + reads + ' 次' };
+          }
+          step('5️⃣ 第' + reads + '次：状态=0（连续 ' + zeroStreak + '/' + ZERO_LIMIT + '，继续等…）');
+        }
+      }
+    }
+  }
+
+  /** 轮询间隔（已简化，固定 0=读完立刻再读） */
+  function sdPollMs() {
+    return 0;
+  }
+
+  /** 领取超时（已简化，固定 15 秒） */
+  function sdMaxWait() {
+    return 15000;
+  }
+
+  // ---- 一键送一个 ----
+  $('sdAuto').onclick = async function () {
+    if (_scriptRunning) { toast('有其他脚本在跑，先停'); return; }
+    _scriptRunning = true;
+    _sdStopFlag = false;
+    $('sdAuto').disabled = true;
+    try {
+      sdOut('📍 读取第1格地址…', '#f0883e');
+      await sdAddr(true);   // ⚠️ 每次开跑都强制重读一次地址
+      var r = await sdOneShot(function (m) { sdOut(m, '#f0883e'); },
+        { waitClaim: true, maxWait: sdMaxWait(), pollMs: sdPollMs(),
+          shouldStop: function () { return _sdStopFlag; } });
+      sdOut((r.ok ? '🏁 ' : '') + r.msg, r.ok ? '#3fb950' : '#f0883e');
+    } catch (e) {
+      sdOut('❌ 中断：' + e.message, '#f85149');
+      toast('❌ ' + e.message, 4000);
+    } finally {
+      _scriptRunning = false;
+      var b = $('sdAuto'); if (b) b.disabled = false;
+    }
+  };
+
+  // ---- 🔁 循环送 ----
+  var _loopStop = false;
+  $('sdLoopStop').onclick = function () {
+    _loopStop = true;
+    _sdStopFlag = true;   // ⚡ 让"等领取"立刻中断
+    try { Quest.pressCancel(); } catch (e) {}
+    sdOut('⏹ 已请求停止（立即中断）', '#f0883e');
+  };
+
+  $('sdLoopGo').onclick = async function () {
+    if (_scriptRunning) { toast('有其他脚本在跑，先停'); return; }
+    var total = parseInt($('sdLoopN').value, 10);
+    if (isNaN(total) || total < 0) total = 0;   // ⚡ 0 = 无限
+    var maxWait = sdMaxWait();
+    var pollMs = sdPollMs();
+    _scriptRunning = true;
+    _loopStop = false;
+    _sdStopFlag = false;
+    $('sdLoopGo').disabled = true;
+    $('sdAuto').disabled = true;
+
+    var totalTxt = (total > 0) ? String(total) : '∞';
+    var done = 0, okCnt = 0;
+    try {
+      sdOut('📍 读取第1格地址…', '#f0883e');
+      await sdAddr(true);   // ⚠️ 每次开跑都强制重读一次地址（之后整轮循环用缓存）
+      while (!_loopStop && !_sdStopFlag && (total === 0 || done < total)) {
+        done++;
+        sdOut('🔁 第 ' + done + '/' + totalTxt + ' 轮：开始…', '#f0883e');
+        var r;
+        try {
+          r = await sdOneShot(function (m) {
+            sdOut('🔁 第 ' + done + '/' + totalTxt + ' 轮 ' + m, '#f0883e');
+          }, { waitClaim: true, maxWait: maxWait, pollMs: pollMs,
+               shouldStop: function () { return _sdStopFlag; } });
+        } catch (e) {
+          if (_sdStopFlag) {
+            sdOut('⏹ 已停止（第 ' + done + ' 轮中断）', '#f0883e');
+            break;
+          }
+          sdOut('🔁 第 ' + done + ' 轮 ❌ ' + e.message + '（跳过）', '#f85149');
+          await new Promise(function (r2) { setTimeout(r2, 800); });
+          continue;
+        }
+        if (r.ok) {
+          okCnt++;
+          sdOut('🔁 第 ' + done + '/' + totalTxt + ' 轮 ✅ ' + r.msg +
+                '（成功 ' + okCnt + '）', '#3fb950');
+        } else {
+          sdOut('🔁 第 ' + done + '/' + totalTxt + ' 轮 ⚠️ ' + r.msg, '#f0883e');
+        }
+        // ⚡ 本轮结束 → 立刻进下一轮（0 等待）
+      }
+      sdOut('🏁 循环结束：共 ' + done + ' 轮，成功 ' + okCnt +
+            ((_loopStop || _sdStopFlag) ? '（手动停止）' : ''), '#3fb950');
+    } finally {
+      _scriptRunning = false;
+      _loopStop = false;
+      _sdStopFlag = false;
+      var g = $('sdLoopGo'); if (g) g.disabled = false;
+      var a = $('sdAuto'); if (a) a.disabled = false;
+    }
+  };
+}
+
+/** 关闭脚本（停掉定时器） */
+function scriptStopAll() {
+  _scriptRunning = false;
+  if (_scriptTimer) { clearTimeout(_scriptTimer); clearInterval(_scriptTimer); _scriptTimer = null; }
+}
+
+window.openScript = function () {
+  try { renderScriptPanel(); }
+  catch (e) { toast('打开失败：' + e.message, 4000); }
+};
+
 // ---------- 添加任务 ----------
 // 空槽来源：文件模式看 Store，在线看 ALL
 function findEmptySlot() {
@@ -4326,6 +5121,21 @@ document.addEventListener('DOMContentLoaded', function () {
     if (anchor && anchor.nextSibling) bar.insertBefore(b, anchor.nextSibling);
     else bar.appendChild(b);
     b.onclick = openCheat;
+  })();
+
+  // 🧪 动态注入「脚本」按钮（不改 index.html）
+  (function injectScriptBtn() {
+    var bar = $('swapBtn') ? $('swapBtn').parentNode : null;
+    if (!bar || $('scriptBtn')) return;
+    var b = document.createElement('button');
+    b.id = 'scriptBtn';
+    b.className = 'ghost warn';
+    b.textContent = '🧪 脚本';
+    // 插在「金手指」后面
+    var anchor = $('cheatBtn') || $('swapBtn');
+    if (anchor && anchor.nextSibling) bar.insertBefore(b, anchor.nextSibling);
+    else bar.appendChild(b);
+    b.onclick = openScript;
   })();
 
   $('overlay').addEventListener('click', function (e) {

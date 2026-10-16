@@ -370,6 +370,24 @@ var MONSTERS = {
 
 ## 📜 更新日志
 
+### v1.13.0
+- 🧪 **新增「脚本」按钮**（工具栏 → `🧪 脚本`）—— **按键自动化测试 / 未来的送道具脚本挂这里**
+  - **🔁 连按按键**：设「键 + 间隔(ms) + 按住(ms)」→ 开始/停止，实时显示已发次数
+    - **用途**：测出游戏能识别的最小按键间隔
+  - **🎞 序列**：`clickSeq` 一次性播放（**由 Switch 端执行，间隔不受网络影响**）
+    - 语法：`键`=按一下、`+键`=按住、`-键`=松开、`W数字`=等待ms、`%x,y`=左摇杆
+  - **🎯 单发 & 摇杆**：单按一次 / 摇杆上推（跑一下）
+  - **关闭面板时自动停掉循环 + `clickCancel`**（防"关了还在按"）
+- 📦 **`js/items.js`**（新）—— **物品 ID 表 1617 条**（来源 banson.moe，已过滤 `#Rejected#`）
+  - 提供 `itemName(id)` / `itemSearch(kw)` / `itemCount()`
+  - ⚠️ 目前**只是数据文件，还没做 UI**（下一步"送道具"要用）
+- 🔧 **中转 `is_write_cmd` 名单补全**：加了 `clickSeq / clickCancel / release / setStick / touchHold / touchCancel / key / keyMod / keyMulti`
+  - **修**：之前发 `clickSeq` 会傻等默认超时 → 返回 502（"提示失败但实际执行"）
+- 📄 **`botbase/docs/金手指指令定义.md`**（新）—— Atmosphere DMNT Cheat VM 完整中文整理
+  - 覆盖指令类型 0x0~0xF、按键表、比较条件
+  - **附本项目 4 条金手指的逐行拆解 + 实测结论**
+- 🎮 **`quest.js` 新增按键 API**：`pressKey / pressSeq / pressCancel / setStick / setClickHold`
+
 ### v1.12.3
 - 🐛 **修「点锁定提示失败，但实际锁成功了」**（**真正的根因**）
   - **现象**：点 ❄️ 锁定 → 弹「❌ 锁定失败：`Quest.watchSetFrozen is not a function`」，但去游戏里看，钱**真的锁住了**

@@ -110,6 +110,19 @@ var Bridge = (function () {
     return t.trim();
   }
 
+  /** ⚡ 发命令并"等到 Switch 回 done"（给 clickSeq 用）
+   *  返回 { ok: true/false, ms: 耗时毫秒, raw: 原文 }
+   */
+  async function cmdWait(s, sig, timeoutMs) {
+    var ms = timeoutMs === undefined ? 30000 : timeoutMs;   // 等 done 给长超时
+    var r = await fetchT(url('/cmdwait'), { method: 'POST', body: s }, ms, sig);
+    var t = await r.text();
+    if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
+    t = t.trim();
+    var parts = t.split(/\s+/);
+    return { ok: parts[0] === 'done', ms: parseInt(parts[1] || '0', 10) || 0, raw: t };
+  }
+
   /** 修改 Switch 目标 */
   async function setTarget(ip, port) {
     var r = await fetch(url('/config'), {
@@ -126,6 +139,7 @@ var Bridge = (function () {
   return {
     status: status,
     cmd: cmd,
+    cmdWait: cmdWait,
     setTarget: setTarget,
     getBase: getBase,
     setBase: setBase,

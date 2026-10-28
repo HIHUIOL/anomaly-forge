@@ -2567,6 +2567,582 @@ window.openScript = function () {
   catch (e) { toast('打开失败：' + e.message, 4000); }
 };
 
+// ============================================================
+// 🎯 指针写入（手动输入指针链 → 把文字写进内存）
+// ============================================================
+//  用户给的链：main+12C16908+D0+B8
+//  语义（sys-agent 的 pointerPeek 语义）：
+//    ① 读 [main + off0]                → p1
+//    ② 读 [p1 + off1]                  → p2
+//    ③ 读 [p2 + off2] ...              → 最后一步落在最终地址
+//  即：除了第一段是"main 内偏移"，后面每段都是"上一级指针 + 偏移后取指针"。
+//  最后一段偏移不加跳转 —— 它就是最终写入地址。
+
+/** 把文本转成 UTF-16LE 字节（汉字 2 字节，无 BOM） */
+function textToUtf16le(str) {
+  var out = [];
+  for (var i = 0; i < str.length; i++) {
+    var c = str.charCodeAt(i);
+    out.push(c & 0xFF, (c >>> 8) & 0xFF);
+  }
+  return out;
+}
+
+/** 字节数组 -> 大写 hex */
+function bytesToHexStr(arr) {
+  var s = '';
+  for (var i = 0; i < arr.length; i++) s += (arr[i] < 16 ? '0' : '') + arr[i].toString(16).toUpperCase();
+  return s;
+}
+
+/** 解析 "12C16908+D0+B8" 这类链，返回 {mainOff, offs:[...]} */
+function parsePtrChain(s) {
+  s = String(s || '').trim().replace(/\s+/g, '');
+  s = s.replace(/^main\+/i, '');                 // 允许用户带 main+ 前缀
+  s = s.replace(/^0x/i, '');
+  if (!s) throw new Error('指针链为空');
+  var parts = s.split('+').filter(function (x) { return x !== ''; });
+  if (!parts.length) throw new Error('指针链格式不对');
+  var nums = parts.map(function (p) {
+    var v = parseInt(p.replace(/^0x/i, ''), 16);
+    if (isNaN(v)) throw new Error('无法解析段："' + p + '"（要十六进制，如 D0）');
+    return v;
+  });
+  return { mainOff: nums[0], offs: nums.slice(1) };
+}
+
+/**
+ * 按指针链计算最终绝对地址（只用读取，不写入）。
+ * 链语义：main+mainOff 读指针 → 依次 +offs[i] 读指针 → 最后一段 offs 不加跳转，直接作为偏移。
+ * 例：main+12C16908+D0+B8
+ *   ① p1 = [main+12C16908]
+ *   ② p2 = [p1 + D0]
+ *   ③ 最终 addr = p2 + B8
+ */
+async function resolvePtrChain(mainOff, offs, log) {
+  var mainBase = await Mem.getMainBase();
+  var p = null;
+
+  // 第一级：main + mainOff 处读 8 字节指针
+  var b = await Mem.readAbs(mainBase + mainOff, 8);
+  p = Mem.u64(b);
+  if (log) log('① main+0x' + mainOff.toString(16).toUpperCase() + ' → 0x' + p.toString(16).toUpperCase());
+
+  // 中间各级：+off 后读指针
+  for (var i = 0; i < offs.length - 1; i++) {
+    var a = p + offs[i];
+    var bb = await Mem.readAbs(a, 8);
+    p = Mem.u64(bb);
+    if (log) log('② 0x' + a.toString(16).toUpperCase() + ' → 0x' + p.toString(16).toUpperCase());
+  }
+
+  // 最后一段：直接加偏移，不跳转
+  var finalAddr = p + (offs.length ? offs[offs.length - 1] : 0);
+  if (log) log('③ 最终地址 = 0x' + finalAddr.toString(16).toUpperCase());
+  return finalAddr;
+}
+
+/** 最近一次「计算并写入」的地址与数据（供 ❄️锁定 / 🔥解除锁定 使用）
+ *  只存在内存里：页面刷新就清空，避免误锁已经失效的旧地址。 */
+var lastWrite = null;
+
+/** 指针写入固定的指针链（原输入框已移除，写死在这里）
+ *  main+12C16908 → +D0 → +B8  =  0x2E037A2320（MHRS 聊天输入框显示槽） */
+var PTR_CHAIN = '12C16908+D0+B8';
+
+/** ✂️ 分段写入的中断标志（true = 用户点了停止） */
+var ptrChunkStop = false;
+
+/** 可中断的等待：把长等待切成 50ms 小片，随时能响应停止
+ *  返回 true = 正常等完；false = 被中断 */
+async function ptrSleep(ms) {
+  var end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (ptrChunkStop) return false;
+    var left = end - Date.now();
+    await new Promise(function (r) { setTimeout(r, Math.min(50, left > 0 ? left : 0)); });
+  }
+  return !ptrChunkStop;
+}
+
+/** 收藏的文字（localStorage，越新越前） */
+function ptrFavList() {
+  try { return JSON.parse(localStorage.getItem('af.ptrFav') || '[]'); } catch (e) { return []; }
+}
+function ptrFavSave(arr) { localStorage.setItem('af.ptrFav', JSON.stringify(arr)); }
+function ptrFavAdd(t) {
+  t = String(t || '').trim();
+  if (!t) return ptrFavList();
+  var arr = ptrFavList().filter(function (x) { return x !== t; });
+  arr.unshift(t);
+  arr = arr.slice(0, 50);
+  ptrFavSave(arr);
+  return arr;
+}
+function ptrFavDel(t) { ptrFavSave(ptrFavList().filter(function (x) { return x !== t; })); }
+
+/** 核心：按指针链把文字写进内存（解锁 → 写入 → 重新锁定）
+ *  @param txt  要写入的文字
+ *  @param log  日志回调（可为 null）
+ *  返回 { ok, addr, hex }
+ */
+async function doPtrWrite(txt, log) {
+  log = log || function () {};
+  if (Store.getMode() === 'file') throw new Error('需要在线模式（连上 Switch）');
+  txt = String(txt || '');
+  if (!txt) throw new Error('文字为空');
+
+  var hb = await Mem.getHeapBase();
+
+  var ch = parsePtrChain(PTR_CHAIN);
+  log('链：main+0x' + ch.mainOff.toString(16).toUpperCase() +
+      ch.offs.map(function (o) { return '+0x' + o.toString(16).toUpperCase(); }).join(''));
+  var addr = await resolvePtrChain(ch.mainOff, ch.offs, log);
+
+  // ---------- 步骤 1：先解除锁定 ----------
+  //  ⚠️ 不先解锁的话，freeze 线程每 3ms 会把旧值写回去，刚写的文字会被立即覆盖。
+  //  注意 sys-agent 的 sub_freeze 线程在 IDLE 态睡 1 秒才查表，所以解锁后它"可能还会再写一次旧值"。
+  //  这里不用死等，改为：解锁 → 写入 → 再检查一次，如果被盖回就重写（通常一次就成）。
+  log('---');
+  log('① 解除旧锁定');
+  var useFreeze = (addr >= hb);
+  var off = useFreeze ? (addr - hb) : 0;
+  if (useFreeze) {
+    await Bridge.cmd('unFreeze 0x' + off.toString(16).toUpperCase());
+    log('   偏移 0x' + off.toString(16).toUpperCase() + ' 已解除');
+  } else {
+    log('   ⚠️ 地址小于 heapBase，跳过锁定步骤');
+  }
+
+  // ---------- 步骤 2：写入文字 ----------
+  var bytes = textToUtf16le(txt);
+  log('---');
+  log('② 写入文字：「' + txt + '」');
+  log('   UTF-16LE：' + bytesToHexStr(bytes) + '（' + bytes.length + ' 字节）');
+
+  var before = await Mem.readAbs(addr, Math.max(bytes.length + 2, 32));
+  log('   写前内容：' + bytesToHexStr(before));
+
+  // 正文 + 结束符 0x0000：游戏读到 0x0000 才认为字符串结束
+  var payload = bytes.concat([0x00, 0x00]);
+  var wantHex = bytesToHexStr(payload);
+
+  // 写入 + 回读校验；若被 freeze 线程残留写成旧值，自动重写（最多 3 次）
+  var okWrite = false;
+  for (var attempt = 1; attempt <= 3; attempt++) {
+    await Mem.writeAbs(addr, new Uint8Array(payload));
+    var after = await Mem.readAbs(addr, payload.length);
+    var backHex = bytesToHexStr(after);
+    if (backHex.toUpperCase() === wantHex.toUpperCase()) {
+      okWrite = true;
+      log('   ✅ 已写入并回读一致：' + backHex + (attempt > 1 ? '（第 ' + attempt + ' 次）' : ''));
+      break;
+    }
+    log('   ⚠️ 第 ' + attempt + ' 次写入被覆盖，重试…');
+    await new Promise(function (r) { setTimeout(r, 120); });
+  }
+  if (!okWrite) {
+    log('   ⚠️ 写入后始终被覆盖（可能有东西在持续写这个地址）');
+  }
+  log('   地址：0x' + addr.toString(16).toUpperCase() +
+      '，结束符位置：0x' + (addr + bytes.length).toString(16).toUpperCase());
+
+  lastWrite = { addr: addr, hex: wantHex, size: payload.length, text: txt };
+
+  // ---------- 步骤 3：重新锁定（不等待，锁上就返回）----------
+  log('---');
+  if (useFreeze) {
+    log('③ 重新锁定');
+    await Bridge.cmd('freeze 0x' + off.toString(16).toUpperCase() + ' 0x' + wantHex);
+    log('   偏移 0x' + off.toString(16).toUpperCase() + ' = ' + wantHex);
+    log('🏁 完成（地址 0x' + addr.toString(16).toUpperCase() + '）');
+  } else {
+    log('③ 跳过重新锁定（地址不在 heap 区）');
+    log('🏁 完成（地址 0x' + addr.toString(16).toUpperCase() + '）');
+  }
+
+  return { ok: okWrite, addr: addr, hex: wantHex };
+}
+
+/** 渲染「指针写入」面板 */
+async function renderPtrPanel() {
+  var html = '<h2>🎯 指针写入</h2>' +
+    '<div class="sub">文字 → UTF-16LE 写入（自动补结束符、自动重新锁定）</div>';
+
+  if (Store.getMode() === 'file') {
+    html += '<div class="hint">⚠️ 当前是<b>文件模式</b>，需要连上 Switch（在线模式）才能用。</div>';
+  }
+
+  html +=
+    '<div class="sec">文字</div>' +
+    '<div style="display:flex;gap:8px;align-items:stretch">' +
+      '<input id="ptrText" placeholder="输入要写入的文字" style="flex:1;font-size:15px" />' +
+      '<button id="ptrClear" class="ghost" title="清空输入框" style="padding:0 12px;flex:0 0 auto">✕</button>' +
+    '</div>' +
+    '<div class="hint" id="ptrPreview" style="margin:6px 0 0">（输入文字后显示编码预览）</div>' +
+
+    '<div style="display:flex;gap:8px;margin-top:14px">' +
+      '<button id="ptrWrite" style="flex:1">✅ 写入并锁定</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button id="ptrChunk" class="ghost" style="flex:1">✂️ 分段写入</button>' +
+      '<button id="ptrChunkStop" class="ghost" style="flex:0 0 auto;display:none;color:var(--err);border-color:var(--err)">⏹ 停止</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button id="ptrFav" class="ghost" style="flex:1">⭐ 收藏</button>' +
+      '<button id="ptrUnlock" class="ghost" style="flex:1">🔥 解除锁定</button>' +
+    '</div>' +
+    '<div class="hint" style="margin:8px 0 0">✂️ <b>分段写入</b>：每 20 字写一次并锁定，' +
+      '中间按 3 下 <code>MINUS</code>（减号键），直到把整段文字发完。</div>' +
+
+    '<div id="ptrLog" class="hint" style="margin-top:10px;white-space:pre-wrap;font-family:monospace;font-size:12px"></div>' +
+
+    '<div class="sheet-actions" style="margin-top:14px">' +
+      '<button class="ghost" id="ptrClose" style="width:100%">关闭</button>' +
+    '</div>';
+
+  $('sheet').innerHTML = html;
+  showOverlay();
+
+  var logEl = $('ptrLog');
+  function log(s) { logEl.textContent += s + '\n'; }
+
+  // ---- 编码预览 ----
+  function updPreview() {
+    var v = $('ptrText').value;
+    var pv = $('ptrPreview');
+    if (!v) { pv.textContent = '（输入文字后显示编码预览）'; return; }
+    var bytes = textToUtf16le(v);
+    pv.innerHTML = 'UTF-16LE：<code>' + bytesToHexStr(bytes) + '</code>' +
+      ' <span class="sub">（' + v.length + ' 字符 / ' + bytes.length + ' 字节）</span>';
+  }
+  $('ptrText').addEventListener('input', updPreview);
+
+  // ---- ✕ 清空输入框 ----
+  $('ptrClear').onclick = function () {
+    $('ptrText').value = '';
+    updPreview();
+    $('ptrText').focus();
+  };
+
+  $('ptrClose').onclick = function () { hideOverlay(); };
+
+  // ---- ✅ 写入并锁定 ----
+  $('ptrWrite').onclick = async function () {
+    var txt = $('ptrText').value;
+    if (!txt) { toast('请先输入要写入的文字'); return; }
+    logEl.textContent = '';
+    var btn = this;
+    busy(btn, true, '⏳ 写入中…');
+    try {
+      await doPtrWrite(txt, log);
+      toast('✅ 已写入并锁定（' + txt + '）', 3000);
+    } catch (e) {
+      log('❌ ' + e.message);
+      toast('❌ 写入失败：' + e.message, 4000);
+    }
+    busy(btn, false);
+  };
+
+  // ---- ✂️ 分段写入：每 20 字写一次 + 锁定，然后按 3 下 MINUS ----
+  //  节奏（用户定）：
+  //    写入 → 等 1s → MINUS → 500ms → MINUS → 500ms → MINUS
+  //    ⚠️ 第 3 下 MINUS 发出 = 游戏里真正发送了消息
+  //    ⚠️ 两次「第 3 下 MINUS」的间隔必须落在 6~7 秒之间
+  $('ptrChunk').onclick = async function () {
+    var full = $('ptrText').value;
+    if (!full) { toast('请先输入要写入的文字'); return; }
+
+    var CHUNK = 20;              // 每段字数
+    var AFTER_WRITE_MS = 1000;   // 写入完后等 1 秒再按键
+    var GAP_1_2 = 1000;          // 第1下 → 第2下 的间隔
+    var GAP_2_3 = 1000;          // 第2下 → 第3下 的间隔
+    var SEND_GAP_TARGET = 6500;  // 两次"发送"（第3下MINUS）的目标间隔（6~7s 取中）
+    var SEND_GAP_MIN = 6000;     // 判定用
+    var SEND_GAP_MAX = 7000;
+
+    var total = full.length;
+    var parts = [];
+    for (var i = 0; i < total; i += CHUNK) parts.push(full.substr(i, CHUNK));
+
+    if (parts.length > 1) {
+      if (!confirm('将把 ' + total + ' 字分成 ' + parts.length + ' 段依次写入并锁定，\n' +
+                   '每段后按 3 下减号键（第 3 下 = 游戏发送）。\n' +
+                   '两次发送间隔控制在 6~7 秒。\n\n' +
+                   '⚠️ 运行中可点「⏹ 停止」中断（会在当前等待结束后停下）。\n\n确定开始？')) return;
+    }
+
+    logEl.textContent = '';
+    log('✂️ 分段写入：共 ' + total + ' 字，分 ' + parts.length + ' 段（每段 ≤' + CHUNK + ' 字）');
+    log('   节奏：写入 → 等 ' + AFTER_WRITE_MS + 'ms → MINUS → ' + GAP_1_2 +
+        'ms → MINUS → ' + GAP_2_3 + 'ms → MINUS（第3下=发送）');
+    log('   两次发送间隔：' + SEND_GAP_MIN + '~' + SEND_GAP_MAX + 'ms');
+    log('');
+
+    var btn = this;
+    var stopBtn = $('ptrChunkStop');
+    ptrChunkStop = false;
+    // 运行中：显示「⏹ 停止」，主按钮变「运行中…」并禁用
+    if (stopBtn) { stopBtn.style.display = ''; stopBtn.textContent = '⏹ 停止'; stopBtn.disabled = false; }
+    btn.textContent = '⏳ 运行中…';
+    btn.disabled = true;
+
+    var done = 0;
+    var lastSendAt = 0;
+    function restoreBtns() {
+      if (stopBtn) stopBtn.style.display = 'none';
+      btn.textContent = '✂️ 分段写入';
+      btn.disabled = false;
+    }
+    // 检查是否已请求停止；停止时打印提示并返回 true
+    function halted(where) {
+      if (ptrChunkStop) {
+        log('⏹ 已停止（在' + where + '）');
+        log('🏁 中断：已完成 ' + done + '/' + parts.length + ' 段');
+        toast('⏹ 已停止（完成 ' + done + '/' + parts.length + ' 段）', 4000);
+        return true;
+      }
+      return false;
+    }
+
+    try {
+      for (var k = 0; k < parts.length; k++) {
+        if (halted('下一段开始前')) break;
+
+        var seg = parts[k];
+
+        log('━━━ 第 ' + (k + 1) + '/' + parts.length + ' 段：「' + seg + '」（' + seg.length + ' 字）━━━');
+        await doPtrWrite(seg, log);
+        done++;
+
+        // ⚠️ 最后一段也要按键！写入只是改内存，第 3 下 MINUS 才是真的游戏内发送。
+        //    不按键的话最后这段永远发不出去。
+        if (halted('第 ' + done + ' 段写入后')) break;
+
+        // 写入完 → 等 1 秒（可中断）
+        log('   ⏳ 等待 ' + AFTER_WRITE_MS + 'ms…');
+        if (!await ptrSleep(AFTER_WRITE_MS)) { halted('写入后等待'); break; }
+
+        // 时间轴调度：保证本次第3下落在上次发送 + SEND_GAP_TARGET 附近
+        if (lastSendAt > 0) {
+          // 从"现在"到第3下发出，还要经过 GAP_1_2 + GAP_2_3 + 三次按键耗时
+          var estThirdAt = Date.now() + GAP_1_2 + GAP_2_3 + 400;
+          var targetThirdAt = lastSendAt + SEND_GAP_TARGET;
+          var preWait = targetThirdAt - estThirdAt;
+          if (preWait > 0) {
+            log('   ⏳ 距上次发送 ' + (Date.now() - lastSendAt) + 'ms，' +
+                '为保证间隔≈' + SEND_GAP_TARGET + 'ms，先等 ' + preWait + 'ms…（可点停止）');
+            if (!await ptrSleep(preWait)) { halted('节奏等待中'); break; }
+          } else {
+            log('   ⚠️ 已用掉 ' + (Date.now() - lastSendAt) + 'ms，间隔将超过目标');
+          }
+        }
+        if (halted('按键前')) break;
+
+        log('   ⌨️ MINUS (1/3)');
+        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第1下失败：' + e.message); }
+        if (!await ptrSleep(GAP_1_2)) { log('⏹ 已停止（第1下与第2下之间）'); toast('⏹ 已停止（已发 1/3）', 4000); break; }
+
+        log('   ⌨️ MINUS (2/3)');
+        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第2下失败：' + e.message); }
+        if (!await ptrSleep(GAP_2_3)) { log('⏹ 已停止（第2下与第3下之间）'); toast('⏹ 已停止（已发 2/3，本轮未发送）', 4000); break; }
+
+        log('   ⌨️ MINUS (3/3) ← 这一下就是游戏发送');
+        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第3下失败：' + e.message); }
+        var sendAt = Date.now();
+
+        if (lastSendAt > 0) {
+          var gap = sendAt - lastSendAt;
+          var tag = (gap >= SEND_GAP_MIN && gap <= SEND_GAP_MAX) ? '✅' : '⚠️';
+          log('   📏 本次发送间隔：' + gap + 'ms ' + tag);
+        } else {
+          log('   📏 首次发送');
+        }
+        lastSendAt = sendAt;
+        log('');
+      }
+      if (!ptrChunkStop) {
+        log('🏁 分段写入完成：共 ' + done + ' 段');
+        toast('✅ 分段写入完成（' + done + ' 段）', 4000);
+      }
+    } catch (e) {
+      log('❌ 第 ' + (done + 1) + ' 段失败：' + e.message);
+      toast('❌ 第 ' + (done + 1) + ' 段失败：' + e.message, 5000);
+    }
+    ptrChunkStop = false;
+    restoreBtns();
+  };
+
+  // ---- ⏹ 停止分段写入 ----
+  $('ptrChunkStop').onclick = function () {
+    ptrChunkStop = true;
+    this.textContent = '⏹ 停止中…';
+    this.disabled = true;
+    setTimeout(function () {
+      var b = $('ptrChunkStop');
+      if (b) { b.textContent = '⏹ 停止'; b.disabled = false; }
+    }, 3000);
+  };
+
+  // ---- ⭐ 收藏（弹出管理面板）----
+  $('ptrFav').onclick = function () {
+    var curText = $('ptrText').value;
+    openPtrFavPanel({
+      restoreText: curText,      // 返回时把输入框内容还原
+      // 点某条收藏 → 直接执行「写入并锁定」
+      onUse: async function (txt, favLog) {
+        await doPtrWrite(txt, favLog);
+      }
+    });
+  };
+
+  // ---- 🔥 解除锁定 ----
+  //  ⚠️ unFreeze 吃的是【相对 heap 的偏移】，不是绝对地址。
+  $('ptrUnlock').onclick = async function () {
+    if (Store.getMode() === 'file') { toast('需要在线模式（连上 Switch）'); return; }
+    var btn = this;
+    busy(btn, true, '⏳ 解除中…');
+    try {
+      var hb = await Mem.getHeapBase();
+      var addr;
+      if (lastWrite) {
+        addr = lastWrite.addr;
+      } else {
+        // 还没写过，就按指针链现算一次
+        var ch = parsePtrChain(PTR_CHAIN);
+        addr = await resolvePtrChain(ch.mainOff, ch.offs, null);
+      }
+      if (addr < hb) throw new Error('地址不在 heap 区，无法解除锁定');
+      var off = addr - hb;
+      await Bridge.cmd('unFreeze 0x' + off.toString(16).toUpperCase());
+      var cnt = await Bridge.cmd('freezeCount');
+      log('🔥 已解除锁定 0x' + addr.toString(16).toUpperCase());
+      log('   偏移（相对 heap）：0x' + off.toString(16).toUpperCase());
+      log('   当前锁定总数：' + parseInt(cnt || '0', 16));
+      toast('🔥 已解除锁定', 3000);
+    } catch (e) {
+      log('❌ 解除失败：' + e.message);
+      toast('❌ 解除失败：' + e.message, 4000);
+    }
+    busy(btn, false);
+  };
+}
+
+/** 渲染「指针写入」面板结束 */
+window.openPtrWrite = function () {
+  renderPtrPanel().catch(function (e) { toast('打开失败：' + e.message, 4000); });
+};
+
+/** 收藏管理面板（独立弹窗）
+ *  opts.onUse(txt, log) —— 点某条收藏时回调，用来执行「写入并锁定」
+ */
+function openPtrFavPanel(opts) {
+  opts = opts || {};
+
+  function render() {
+    var arr = ptrFavList();
+    var h = '<h2>⭐ 收藏</h2>' +
+      '<div class="sub">点文字直接「写入并锁定」；点 ✕ 删除</div>';
+
+    // 新增输入行
+    h += '<div style="display:flex;gap:8px;align-items:stretch;margin-top:12px">' +
+      '<input id="favNew" placeholder="添加新的收藏文字" style="flex:1;font-size:15px" />' +
+      '<button id="favAddBtn" style="padding:0 14px;flex:0 0 auto">+ 添加</button>' +
+      '</div>';
+
+    // 列表
+    h += '<div class="sec" style="margin-top:16px">已收藏（' + arr.length + '）</div>';
+    if (!arr.length) {
+      h += '<div class="hint">还没有收藏。在上面输入文字，点「+ 添加」。</div>';
+    } else {
+      h += '<div id="favList">';
+      arr.forEach(function (t, i) {
+        h += '<div class="frow" style="align-items:center;gap:8px;margin:6px 0">' +
+          '<button data-fav-use="' + i + '" style="flex:1;text-align:left;font-size:15px">' +
+            escapeHtml(t) + '</button>' +
+          '<button data-fav-del="' + i + '" class="ghost" ' +
+            'style="flex:0 0 auto;padding:0 12px;color:var(--err)">✕</button>' +
+          '</div>';
+      });
+      h += '</div>';
+    }
+
+    h += '<div id="favLog" class="hint" style="margin-top:12px;white-space:pre-wrap;' +
+      'font-family:monospace;font-size:12px"></div>';
+
+    h += '<div class="sheet-actions" style="margin-top:14px">' +
+      '<button class="ghost" id="favBack" style="width:100%">← 返回</button>' +
+      '</div>';
+
+    $('sheet').innerHTML = h;
+    bindFav();
+  }
+
+  function bindFav() {
+    var logEl = $('favLog');
+    function log(s) { logEl.textContent += s + '\n'; }
+
+    // 添加
+    $('favAddBtn').onclick = function () {
+      var v = $('favNew').value.trim();
+      if (!v) { toast('请输入要收藏的文字'); return; }
+      if (ptrFavList().indexOf(v) >= 0) { toast('已经在收藏里了'); return; }
+      ptrFavAdd(v);
+      render();
+      toast('⭐ 已添加「' + v + '」', 2000);
+    };
+    $('favNew').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') $('favAddBtn').click();
+    });
+
+    // 删除
+    $('sheet').querySelectorAll('[data-fav-del]').forEach(function (btn) {
+      btn.onclick = function () {
+        var arr = ptrFavList();
+        var t = arr[parseInt(btn.dataset.favDel, 10)];
+        ptrFavDel(t);
+        render();
+        toast('已删除「' + t + '」', 1800);
+      };
+    });
+
+    // 点击 → 写入并锁定
+    $('sheet').querySelectorAll('[data-fav-use]').forEach(function (btn) {
+      btn.onclick = async function () {
+        var arr = ptrFavList();
+        var t = arr[parseInt(btn.dataset.favUse, 10)];
+        if (!opts.onUse) return;
+        if (Store.getMode() === 'file') { toast('需要在线模式（连上 Switch）'); return; }
+
+        logEl.textContent = '';
+        busy(btn, true, '⏳ 写入中…');
+        try {
+          await opts.onUse(t, log);
+          toast('✅ 已写入并锁定（' + t + '）', 3000);
+        } catch (e) {
+          log('❌ ' + e.message);
+          toast('❌ 写入失败：' + e.message, 4000);
+        }
+        busy(btn, false);
+      };
+    });
+
+    // 返回主面板
+    $('favBack').onclick = function () {
+      // 直接重新渲染主面板（比还原 innerHTML 再重新绑事件更干净）
+      renderPtrPanel().then(function () {
+        var inp = $('ptrText');
+        if (inp && opts.restoreText) {
+          inp.value = opts.restoreText;
+          inp.dispatchEvent(new Event('input'));
+        }
+      }).catch(function (e) { toast('返回失败：' + e.message, 3000); });
+    };
+  }
+
+  render();
+}
+
 // ---------- 添加任务 ----------
 // 空槽来源：文件模式看 Store，在线看 ALL
 function findEmptySlot() {
@@ -3423,6 +3999,21 @@ document.addEventListener('DOMContentLoaded', function () {
     if (anchor && anchor.nextSibling) bar.insertBefore(b, anchor.nextSibling);
     else bar.appendChild(b);
     b.onclick = openScript;
+  })();
+
+  // 🎯 动态注入「指针写入」按钮（不改 index.html）
+  (function injectPtrBtn() {
+    var bar = $('swapBtn') ? $('swapBtn').parentNode : null;
+    if (!bar || $('ptrBtn')) return;
+    var b = document.createElement('button');
+    b.id = 'ptrBtn';
+    b.className = 'ghost warn';
+    b.textContent = '🎯 指针写入';
+    // 插在「脚本」后面
+    var anchor = $('scriptBtn') || $('cheatBtn') || $('swapBtn');
+    if (anchor && anchor.nextSibling) bar.insertBefore(b, anchor.nextSibling);
+    else bar.appendChild(b);
+    b.onclick = openPtrWrite;
   })();
 
   $('overlay').addEventListener('click', function (e) {

@@ -275,7 +275,7 @@
  * ============================================================ */
 
 // ---------- 应用版本号（改这里即可；标题栏会显示）----------
-var APP_VERSION = 'v1.37.1';
+var APP_VERSION = 'v1.37.2';
 
 // ---------- 怪物 ID 表（完整 ID，非低字节）----------
 var MONSTERS = {
@@ -4539,6 +4539,64 @@ async function doPtrWrite(txt, log) {
   return { ok: okWrite, addr: addr, hex: wantHex };
 }
 
+/**
+ * 「写入并发送」：给「✅ 写入并锁定」按钮和收藏里点某条用。
+ * 流程（用户定）：
+ *   写入并锁定 → MINUS → 500ms → MINUS → 500ms → MINUS（=游戏发送）→ 解除锁定
+ * 为什么要解除锁定：锁着的话游戏反复被写同一段文字，之后想输入新内容会被一直覆盖。
+ *
+ * @param txt      要写入的文字
+ * @param log      日志回调
+ * @param sleepFn  可中断的等待函数（分段写入传 ptrSleep；单人用普通 sleep 即可）
+ * @param stopped  可选：每步前调用，返回 true 表示用户要求停止
+ * 返回 { ok, sent, addr, hex }
+ */
+async function doPtrWriteAndSend(txt, log, sleepFn, stopped) {
+  log = log || function () {};
+  sleepFn = sleepFn || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  stopped = stopped || function () { return false; };
+
+  var SEND_GAP_1_2 = 500;   // 第1下 → 第2下
+  var SEND_GAP_2_3 = 500;   // 第2下 → 第3下
+
+  // ---------- 步骤 1+2+3：写入并重新锁定（复用 doPtrWrite）----------
+  var w = await doPtrWrite(txt, log);
+  if (stopped()) return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex };
+
+  // ---------- 步骤 4：三下 MINUS，第 3 下 = 游戏发送 ----------
+  log('---');
+  log('④ 按 3 下减号键（第 3 下 = 游戏发送）');
+  log('   ⌨️ MINUS (1/3)');
+  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第1下失败：' + e.message); }
+  if (!await sleepFn(SEND_GAP_1_2)) { log('⏹ 已停止（第1下与第2下之间）'); return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex }; }
+
+  log('   ⌨️ MINUS (2/3)');
+  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第2下失败：' + e.message); }
+  if (!await sleepFn(SEND_GAP_2_3)) { log('⏹ 已停止（第2下与第3下之间，本轮未发送）'); return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex }; }
+
+  log('   ⌨️ MINUS (3/3) ← 已发送');
+  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第3下失败：' + e.message); }
+
+  // ---------- 步骤 5：解除锁定 ----------
+  log('---');
+  log('⑤ 解除锁定');
+  try {
+    var hb = await Mem.getHeapBase();
+    if (w.addr >= hb) {
+      var off = w.addr - hb;
+      await Bridge.cmd('unFreeze 0x' + off.toString(16).toUpperCase());
+      log('   已解除锁定（偏移 0x' + off.toString(16).toUpperCase() + '）');
+    } else {
+      log('   ⚠️ 地址不在 heap 区，跳过');
+    }
+  } catch (e) {
+    log('   ⚠️ 解除锁定失败：' + e.message);
+  }
+
+  log('🏁 完成：写入 → 发送 → 已解锁');
+  return { ok: w.ok, sent: true, addr: w.addr, hex: w.hex };
+}
+
 /** 渲染「指针写入」面板 */
 async function renderPtrPanel() {
   var html = '<h2>🎯 指针写入</h2>' +
@@ -4557,7 +4615,7 @@ async function renderPtrPanel() {
     '<div class="hint" id="ptrPreview" style="margin:6px 0 0">（输入文字后显示编码预览）</div>' +
 
     '<div style="display:flex;gap:8px;margin-top:14px">' +
-      '<button id="ptrWrite" style="flex:1">✅ 写入并锁定</button>' +
+      '<button id="ptrWrite" style="flex:1">✅ 写入并发送</button>' +
     '</div>' +
     '<div style="display:flex;gap:8px;margin-top:8px">' +
       '<button id="ptrChunk" class="ghost" style="flex:1">✂️ 分段写入</button>' +
@@ -4610,8 +4668,8 @@ async function renderPtrPanel() {
     var btn = this;
     busy(btn, true, '⏳ 写入中…');
     try {
-      await doPtrWrite(txt, log);
-      toast('✅ 已写入并锁定（' + txt + '）', 3000);
+      var r = await doPtrWriteAndSend(txt, log);
+      toast(r.sent ? ('✅ 已发送并解锁（' + txt + '）') : ('✅ 已写入（未发送）'), 3000);
     } catch (e) {
       log('❌ ' + e.message);
       toast('❌ 写入失败：' + e.message, 4000);
@@ -4766,7 +4824,7 @@ async function renderPtrPanel() {
       restoreText: curText,      // 返回时把输入框内容还原
       // 点某条收藏 → 直接执行「写入并锁定」
       onUse: async function (txt, favLog) {
-        await doPtrWrite(txt, favLog);
+        await doPtrWriteAndSend(txt, favLog);
       }
     });
   };
@@ -4817,7 +4875,7 @@ function openPtrFavPanel(opts) {
   function render() {
     var arr = ptrFavList();
     var h = '<h2>⭐ 收藏</h2>' +
-      '<div class="sub">点文字直接「写入并锁定」；点 ✕ 删除</div>';
+      '<div class="sub">点文字直接「写入并发送」（按 3 下减号后自动解锁）；点 ✕ 删除</div>';
 
     // 新增输入行
     h += '<div style="display:flex;gap:8px;align-items:stretch;margin-top:12px">' +
@@ -4893,7 +4951,7 @@ function openPtrFavPanel(opts) {
         busy(btn, true, '⏳ 写入中…');
         try {
           await opts.onUse(t, log);
-          toast('✅ 已写入并锁定（' + t + '）', 3000);
+          toast('✅ 已发送并解锁（' + t + '）', 3000);
         } catch (e) {
           log('❌ ' + e.message);
           toast('❌ 写入失败：' + e.message, 4000);

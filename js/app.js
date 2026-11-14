@@ -141,7 +141,7 @@ var _busy = false;   // 全局忙碌锁：读取/写入期间禁止重复操作
 /** 禁用/启用一组按钮 */
 function setBusy(on) {
   _busy = on;
-  var ids = ['reload', 'addBtn', 'batch', 'exportBtn', 'openBtn', 'writeBackBtn', 'cfgBtn', 'shotBtn', 'swapBtn', 'cheatBtn', 'scriptBtn'];
+  var ids = ['reload', 'addBtn', 'batch', 'exportBtn', 'openBtn', 'writeBackBtn', 'cfgBtn', 'shotBtn', 'swapBtn', 'cheatBtn', 'scriptBtn', 'ptrBtn'];
   for (var i = 0; i < ids.length; i++) {
     var b = $(ids[i]);
     if (b) b.disabled = on;
@@ -2568,7 +2568,7 @@ window.openScript = function () {
 };
 
 // ============================================================
-// 🎯 指针写入（手动输入指针链 → 把文字写进内存）
+// 💬 对话发送（写文字进游戏聊天槽 → 三下减号发送）
 // ============================================================
 //  用户给的链：main+12C16908+D0+B8
 //  语义（sys-agent 的 pointerPeek 语义）：
@@ -2767,40 +2767,41 @@ async function doPtrWrite(txt, log) {
 /**
  * 「写入并发送」：给「✅ 写入并锁定」按钮和收藏里点某条用。
  * 流程（用户定）：
- *   写入并锁定 → MINUS → 500ms → MINUS → 500ms → MINUS（=游戏发送）→ 解除锁定
+ *   写入并锁定 → MINUS → 1000ms → MINUS → 1000ms → MINUS（=游戏发送）→ 解除锁定
  * 为什么要解除锁定：锁着的话游戏反复被写同一段文字，之后想输入新内容会被一直覆盖。
  *
  * @param txt      要写入的文字
  * @param log      日志回调
- * @param sleepFn  可中断的等待函数（分段写入传 ptrSleep；单人用普通 sleep 即可）
- * @param stopped  可选：每步前调用，返回 true 表示用户要求停止
+ * @param stopped  可选：写入前调用，返回 true 表示用户要求停止
  * 返回 { ok, sent, addr, hex }
  */
-async function doPtrWriteAndSend(txt, log, sleepFn, stopped) {
+async function doPtrWriteAndSend(txt, log, stopped) {
   log = log || function () {};
-  sleepFn = sleepFn || function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
   stopped = stopped || function () { return false; };
 
-  var SEND_GAP_1_2 = 500;   // 第1下 → 第2下
-  var SEND_GAP_2_3 = 500;   // 第2下 → 第3下
+  var SEND_GAP_1_2 = 1000;   // 第1下 → 第2下
+  var SEND_GAP_2_3 = 1000;   // 第2下 → 第3下
 
   // ---------- 步骤 1+2+3：写入并重新锁定（复用 doPtrWrite）----------
   var w = await doPtrWrite(txt, log);
   if (stopped()) return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex };
 
   // ---------- 步骤 4：三下 MINUS，第 3 下 = 游戏发送 ----------
+  // ⚠️ 必须用「一条 clickSeq」把三下打包发出，不能拆成三次独立命令：
+  //    虚拟手柄空闲超过 controllerIdleReleaseMs（实测 1000ms）会释放 player1，
+  //    下一次按键要重新抢占 + 等 HOS 路由，间隔 1000ms 正好踩边界，
+  //    按键命令返回 done 但游戏可能收不到（表现为「只按了一下」）。
+  //    打包成一个序列后，中间没有空闲窗口，时序也最精确。
+  var seq = 'MINUS,W' + SEND_GAP_1_2 + ',MINUS,W' + SEND_GAP_2_3 + ',MINUS';
   log('---');
   log('④ 按 3 下减号键（第 3 下 = 游戏发送）');
-  log('   ⌨️ MINUS (1/3)');
-  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第1下失败：' + e.message); }
-  if (!await sleepFn(SEND_GAP_1_2)) { log('⏹ 已停止（第1下与第2下之间）'); return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex }; }
-
-  log('   ⌨️ MINUS (2/3)');
-  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第2下失败：' + e.message); }
-  if (!await sleepFn(SEND_GAP_2_3)) { log('⏹ 已停止（第2下与第3下之间，本轮未发送）'); return { ok: w.ok, sent: false, addr: w.addr, hex: w.hex }; }
-
-  log('   ⌨️ MINUS (3/3) ← 已发送');
-  try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第3下失败：' + e.message); }
+  log('   ⌨️ ' + seq);
+  try {
+    var r4 = await Quest.pressSeqWait(seq, 8000);
+    log('      序列播放完成（' + r4.ms + 'ms）');
+  } catch (e) {
+    log('      ⚠️ 按键序列失败：' + e.message);
+  }
 
   // ---------- 步骤 5：解除锁定 ----------
   log('---');
@@ -2822,9 +2823,9 @@ async function doPtrWriteAndSend(txt, log, sleepFn, stopped) {
   return { ok: w.ok, sent: true, addr: w.addr, hex: w.hex };
 }
 
-/** 渲染「指针写入」面板 */
+/** 渲染「对话发送」面板 */
 async function renderPtrPanel() {
-  var html = '<h2>🎯 指针写入</h2>' +
+  var html = '<h2>💬 对话发送</h2>' +
     '<div class="sub">文字 → UTF-16LE 写入（自动补结束符、自动重新锁定）</div>';
 
   if (Store.getMode() === 'file') {
@@ -2885,16 +2886,19 @@ async function renderPtrPanel() {
 
   $('ptrClose').onclick = function () { hideOverlay(); };
 
-  // ---- ✅ 写入并锁定 ----
+  // ---- ✅ 写入并发送 ----
   $('ptrWrite').onclick = async function () {
     var txt = $('ptrText').value;
     if (!txt) { toast('请先输入要写入的文字'); return; }
+    // ⚠️ 点击的瞬间就清空输入框（不等发送结束），避免重复点击重复发送
+    $('ptrText').value = '';
+    updPreview();
     logEl.textContent = '';
     var btn = this;
     busy(btn, true, '⏳ 写入中…');
     try {
       var r = await doPtrWriteAndSend(txt, log);
-      toast(r.sent ? ('✅ 已发送并解锁（' + txt + '）') : ('✅ 已写入（未发送）'), 3000);
+      toast(r.sent ? '✅ 已发送并解锁' : '✅ 已写入（未发送）', 3000);
     } catch (e) {
       log('❌ ' + e.message);
       toast('❌ 写入失败：' + e.message, 4000);
@@ -2997,16 +3001,18 @@ async function renderPtrPanel() {
         }
         if (halted('按键前')) break;
 
-        log('   ⌨️ MINUS (1/3)');
-        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第1下失败：' + e.message); }
-        if (!await ptrSleep(GAP_1_2)) { log('⏹ 已停止（第1下与第2下之间）'); toast('⏹ 已停止（已发 1/3）', 4000); break; }
-
-        log('   ⌨️ MINUS (2/3)');
-        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第2下失败：' + e.message); }
-        if (!await ptrSleep(GAP_2_3)) { log('⏹ 已停止（第2下与第3下之间）'); toast('⏹ 已停止（已发 2/3，本轮未发送）', 4000); break; }
-
-        log('   ⌨️ MINUS (3/3) ← 这一下就是游戏发送');
-        try { await Quest.pressSeqWait('MINUS', 8000); } catch (e) { log('      ⚠️ 第3下失败：' + e.message); }
+        // ⚠️ 三下必须打包成一条 clickSeq（同 doPtrWriteAndSend 的原因）：
+        //    虚拟手柄空闲 1000ms（idleRelease）会释放 player1，间隔 1000ms 正踩边界，
+        //    拆成三次独立命令会出现「命令回 done 但游戏没收到」。
+        //    代价：三下（约 2 秒）期间不能中断，中断点保留在本序列前后。
+        var seq3 = 'MINUS,W' + GAP_1_2 + ',MINUS,W' + GAP_2_3 + ',MINUS';
+        log('   ⌨️ ' + seq3 + '（第 3 下 = 游戏发送）');
+        try {
+          var rk = await Quest.pressSeqWait(seq3, 8000);
+          log('      序列播放完成（' + rk.ms + 'ms）');
+        } catch (e) {
+          log('      ⚠️ 按键序列失败：' + e.message);
+        }
         var sendAt = Date.now();
 
         if (lastSendAt > 0) {
@@ -3086,7 +3092,7 @@ async function renderPtrPanel() {
   };
 }
 
-/** 渲染「指针写入」面板结束 */
+/** 渲染「对话发送」面板结束 */
 window.openPtrWrite = function () {
   renderPtrPanel().catch(function (e) { toast('打开失败：' + e.message, 4000); });
 };
@@ -4059,19 +4065,21 @@ document.addEventListener('DOMContentLoaded', function () {
     b.onclick = openScript;
   })();
 
-  // 🎯 动态注入「指针写入」按钮（不改 index.html）
+  // 💬 动态注入「对话发送」按钮（不改 index.html）
   (function injectPtrBtn() {
     var bar = $('swapBtn') ? $('swapBtn').parentNode : null;
     if (!bar || $('ptrBtn')) return;
     var b = document.createElement('button');
     b.id = 'ptrBtn';
     b.className = 'ghost warn';
-    b.textContent = '🎯 指针写入';
+    b.textContent = '💬 对话发送';
     // 插在「脚本」后面
     var anchor = $('scriptBtn') || $('cheatBtn') || $('swapBtn');
     if (anchor && anchor.nextSibling) bar.insertBefore(b, anchor.nextSibling);
     else bar.appendChild(b);
     b.onclick = openPtrWrite;
+    // 兜底：若当前正处于忙碌态（初始化时序问题），创建后立即同步禁用态
+    if (_busy) b.disabled = true;
   })();
 
   $('overlay').addEventListener('click', function (e) {

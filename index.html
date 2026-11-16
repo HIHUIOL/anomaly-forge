@@ -275,7 +275,7 @@
  * ============================================================ */
 
 // ---------- 应用版本号（改这里即可；标题栏会显示）----------
-var APP_VERSION = 'v1.37.8';
+var APP_VERSION = 'v1.37.9';
 
 // ---------- 怪物 ID 表（完整 ID，非低字节）----------
 var MONSTERS = {
@@ -515,20 +515,25 @@ var CHEATS = [
   {
     id: 'taskBypass',
     name: '任务检测绕过',
-    desc: '把「任务检测判定」改成 无条件「是」（mov w8, #1）',
+    desc: '把两处「任务检测判定」改成 无条件「是」（mov w8, #1）',
     type: 'modes',
     items: [
       {
         off: 0x03767DF0,
-        orig: 0x1A9F17E8,       // CSET 类条件指令（真机实测原值）
-        note: '原始：条件设置指令'
+        orig: 0x1A9F17E8,       // cset w8, ne（判定点 1）
+        note: '判定点 1'
+      },
+      {
+        off: 0x03767F48,
+        orig: 0x1A9F17E8,       // cset w8, ne（判定点 2）
+        note: '判定点 2'
       }
     ],
     modes: [
       {
         key: 'normal',
         label: '🔄 恢复正常',
-        value: 0x1A9F17E8,      // 原始指令
+        value: 0x1A9F17E8,      // 原始指令（两处相同）
         note: '恢复游戏原样'
       },
       {

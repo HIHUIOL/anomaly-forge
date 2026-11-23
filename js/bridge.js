@@ -111,16 +111,29 @@ var Bridge = (function () {
   }
 
   /** ⚡ 发命令并"等到 Switch 回 done"（给 clickSeq 用）
-   *  返回 { ok: true/false, ms: 耗时毫秒, raw: 原文 }
+   *  返回 { ok: true/false, ms: 耗时毫秒, cancelled: 是否被取消, raw: 原文 }
+   *
+   *  回包可能长这样（sys-agent）：
+   *     done                      → 播完了（没有耗时，用本地实测）
+   *     cancelled                 → 被 clickCancel 打断（不算失败）
+   *     ERR code=BAD_SEQUENCE ... → 序列本身有语法错（真失败）
    */
   async function cmdWait(s, sig, timeoutMs) {
     var ms = timeoutMs === undefined ? 30000 : timeoutMs;   // 等 done 给长超时
+    var t0 = Date.now();
     var r = await fetchT(url('/cmdwait'), { method: 'POST', body: s }, ms, sig);
     var t = await r.text();
     if (!r.ok) throw new Error(t || ('HTTP ' + r.status));
     t = t.trim();
     var parts = t.split(/\s+/);
-    return { ok: parts[0] === 'done', ms: parseInt(parts[1] || '0', 10) || 0, raw: t };
+    var head = (parts[0] || '').toLowerCase();
+    return {
+      ok: head === 'done',
+      ms: parseInt(parts[1] || '0', 10) || (Date.now() - t0),
+      cancelled: head === 'cancelled',
+      err: head === 'err',
+      raw: t
+    };
   }
 
   /** 修改 Switch 目标 */

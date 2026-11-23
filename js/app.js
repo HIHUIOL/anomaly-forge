@@ -1808,7 +1808,7 @@ function renderScriptPanel() {
   h += '<div class="frow">' +
     '<label>段1键速</label>' +
     '<input id="sdKeyWait" type="number" value="50" min="20" max="500" style="width:80px">' +
-    '<span class="hint" style="margin-left:8px">毫秒（段1+送出按键等待；第一个固定100ms=开菜单动画，其余用这个值）</span>' +
+    '<span class="hint" style="margin-left:8px">毫秒（段1+送出按键等待；第一个固定200ms=开菜单动画，其余用这个值）</span>' +
     '</div>';
   h += '<div class="frow">' +
     '<label>送给</label>' +

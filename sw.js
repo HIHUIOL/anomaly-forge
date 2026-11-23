@@ -11,7 +11,7 @@
  *    （早期由 _inline.py 自动写入，该脚本已在 v1.38.0 随外链改造一并移除）
  * ============================================================ */
 
-const CACHE = 'anomaly-forge-v1.38.0';
+const CACHE = 'anomaly-forge-v1.38.1';
 const ASSETS = [
   './',
   './index.html',
@@ -86,10 +86,20 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('message', (event) => {
   const data = event.data || {};
   if (data.type === 'skip-waiting-clear') {
+    const reply = (ok) => {
+      // 回执给页面，让它知道可以安全刷新了
+      try {
+        if (event.source && event.source.postMessage) {
+          event.source.postMessage({ type: 'cleared', ok: ok });
+        }
+      } catch (e) {}
+    };
     event.waitUntil(
       caches.keys()
         .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
         .then(() => self.skipWaiting())
+        .then(() => reply(true))
+        .catch(() => reply(false))
     );
   }
 });

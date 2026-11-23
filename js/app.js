@@ -3948,17 +3948,18 @@ function initVersion() {
 }
 
 /** 检查更新：
- *  ① 问一遍 index.html（拿最新内联版本，比对 APP_VERSION）
+ *  ① 拉最新 js/data.js（APP_VERSION 现在在这里，不再内联在 index.html）
  *  ② 不等结果也能强刷 —— 用户手动点就是要更新
  */
 async function checkUpdate() {
   try {
     var base = Bridge.getBase().replace(/\/+$/, '');
-    var r = await fetch(base + '/?_t=' + Date.now(), { cache: 'no-store' });
+    // ⚠️ v1.38.0 起 JS 改为外链，APP_VERSION 已不在 index.html 里，改抓 data.js
+    var r = await fetch(base + '/js/data.js?_t=' + Date.now(), { cache: 'no-store' });
     if (!r.ok) return { updated: true, msg: '' };
-    var html = await r.text();
-    // 从页面里抓 APP_VERSION
-    var m = html.match(/var\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
+    var js = await r.text();
+    // 从 data.js 里抓 APP_VERSION
+    var m = js.match(/var\s+APP_VERSION\s*=\s*['"]([^'"]+)['"]/);
     var cur = (typeof APP_VERSION !== 'undefined') ? APP_VERSION : '';
     if (m && m[1] && cur && m[1] !== cur) {
       return { updated: true, msg: '发现新版本 ' + m[1] };
@@ -3968,15 +3969,32 @@ async function checkUpdate() {
   return { updated: false, msg: '已是最新（' + ((typeof APP_VERSION !== 'undefined') ? APP_VERSION : '?') + '）' };
 }
 
-/** 强制刷新：清 SW 缓存后 reload */
+/** 强制刷新：清 SW 缓存后 reload
+ *  ⚠️ v1.38.1：原来只等 300ms 就 reload，清缓存往往没完成 → 又读回旧版。
+ *     改为等 SW 回执（最多 1.2s），且刷新时带上绕过参数。
+ */
 function doReload() {
   var done = false;
-  function go() { if (!done) { done = true; location.reload(); } }
+  function go() {
+    if (done) return;
+    done = true;
+    // 加时间戳绕过 HTTP 缓存（不同 URL 才会重新走网络）
+    var u = location.href.split('#')[0].split('?')[0] + '?_r=' + Date.now();
+    location.replace(u);
+  }
   try {
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) {
-      // 通知 SW 清缓存，然后刷新
-      navigator.serviceWorker.controller.postMessage({ type: 'skip-waiting-clear' });
-      setTimeout(go, 300);
+    var sw = navigator.serviceWorker;
+    if (sw && sw.controller) {
+      // 监听 SW 回执，收到就立刻刷新；收不到就超时兜底
+      var onMsg = function (ev) {
+        if (ev.data && ev.data.type === 'cleared') {
+          sw.removeEventListener('message', onMsg);
+          go();
+        }
+      };
+      sw.addEventListener('message', onMsg);
+      sw.controller.postMessage({ type: 'skip-waiting-clear' });
+      setTimeout(go, 1200);   // 兜底：SW 没回也刷
       return;
     }
   } catch (e) { /* ignore */ }

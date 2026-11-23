@@ -67,7 +67,77 @@ fi
 export PATH="$TERMUX_PREFIX/bin:$PATH"
 
 # ---- 执行 -------------------------------------------------------------------
+#  ⚠️ 关键：必须让中转进程【脱离 MT 的会话】
+#     早先直接 `exec python` 会让 python 变成 MT 会话的子进程，
+#     MT 一退出，Android 就按会话把整组进程清掉 → 中转跟着死。
+#     现在用 setsid 新开会话 + nohup 忽略 SIGHUP + 输入重定向到 /dev/null，
+#     这样进程彻底独立，MT 关掉照样跑。
+#
+#  ⚠️ 两个模式：
+#     直接点开（没有任何参数）          → 后台启动，立刻返回
+#     带参数（--foreground / -f 例外）  → 前台跑，方便看日志
+
+FOREGROUND=0
+for a in "$@"; do
+  case "$a" in
+    -f|--foreground) FOREGROUND=1 ;;
+  esac
+done
+
+# 去掉 -f/--foreground，避免传给 python 报错
+ARGS=()
+for a in "$@"; do
+  case "$a" in
+    -f|--foreground) ;;
+    *) ARGS+=("$a") ;;
+  esac
+done
+
 echo "🐍 $PY"
 echo "📄 $TARGET"
+
+if [ "$FOREGROUND" = "1" ]; then
+  echo "----------------------------------------------------------"
+  echo "（前台模式，Ctrl+C 退出）"
+  echo
+  exec "$PY" "$TARGET" "${ARGS[@]}"
+fi
+
+# ---- 后台模式：脱离会话 ----
 echo "----------------------------------------------------------"
-exec "$PY" "$TARGET" "$@"
+
+# 优先用 setsid（Termux 自带）；没有就退回 nohup
+# ⚠️ 输出写到日志文件，出问题能回查（/dev/null 会看不到报错）
+LOG="$(pwd)/.relay.log"
+: > "$LOG" 2>/dev/null || LOG="/dev/null"
+
+if command -v setsid >/dev/null 2>&1; then
+  setsid "$PY" "$TARGET" "${ARGS[@]}" </dev/null >>"$LOG" 2>&1 &
+  BGPID=$!
+else
+  nohup "$PY" "$TARGET" "${ARGS[@]}" </dev/null >>"$LOG" 2>&1 &
+  BGPID=$!
+fi
+
+# 给它一点时间起来
+sleep 2
+
+if kill -0 "$BGPID" 2>/dev/null; then
+  echo "✅ 中转已在后台启动（PID $BGPID）"
+  echo
+  echo "   关闭 MT 管理器【不会】中断它。"
+  echo
+  echo "   停止方式：再点一次本脚本（会自动关闭）"
+  echo "   查看日志：$LOG"
+  echo
+else
+  echo "❌ 进程没能保持运行。日志内容："
+  echo "----------------------------------------------------------"
+  tail -n 20 "$LOG" 2>/dev/null
+  echo "----------------------------------------------------------"
+  echo
+  echo "   也可以前台跑，直接看报错："
+  echo "   bash 中转服务.sh -f"
+  echo
+  exit 1
+fi

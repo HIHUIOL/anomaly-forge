@@ -2200,13 +2200,13 @@ function renderScriptPanel() {
   }
 
   /** 生成"段1"序列
-   *  - 第一个 W100 固定（等"打开菜单"的动画）
+   *  - 第一个 W200 固定（等"打开菜单"的动画）
    *  - 其余全部用"段1键速"（越小越快）
    */
   function sdBuildSeg1() {
     var w = sdKeyWaitMs();
-    // PLUS, W100(固定), A, Ww, A, Ww, A, Ww, DD, Ww, A
-    return 'PLUS,W100,A,W' + w + ',A,W' + w + ',A,W' + w + ',DD,W' + w + ',A';
+    // PLUS, W200(固定), A, Ww, Y, Ww, DD, Ww, A
+    return 'PLUS,W200,A,W' + w + ',Y,W' + w + ',DD,W' + w + ',A';
   }
 
   // 各步定义

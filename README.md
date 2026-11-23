@@ -1,4 +1,4 @@
-# 怪异任务编辑器（PWA）· v1.0.0
+# 怪异任务编辑器（PWA）· v1.38.0
 
 在浏览器里编辑 **MONSTER HUNTER RISE 16.0.2（破解 Switch）** 的「怪异任务」列表。
 支持**在线直改 Switch 内存**，也支持**离线编辑任务文件**。
@@ -36,7 +36,7 @@ NS (sys-botbase) : 192.168.1.5:6000    ← Switch 的地址（可在设置里改
 ## 🖥 界面说明
 
 ```
-● 怪异任务编辑器 [v1.0.0]    🔵在线  🔢1033 已连接
+● 怪异任务编辑器 [v1.38.0]    🔵在线  🔢1033 已连接
 ────────────────────────────────────────────
 [搜索框] [🔎 筛选●] [⬇ 排序] [📥 打开文件] [➕ 添加任务]
 ────────────────────────────────────────────
@@ -50,7 +50,7 @@ NS (sys-botbase) : 192.168.1.5:6000    ← Switch 的地址（可在设置里改
 | **🟢/🔴 圆点** | Switch 连接状态 |
 | **🔵在线 / 🟠文件** | 当前数据源 |
 | **🔢 1033** | 序号计数器（**下一个新任务会拿到的序号**） |
-| **v1.0.0** | 版本号，**点一下 = 检查更新** |
+| **v1.38.0** | 版本号，**点一下 = 检查更新** |
 
 ---
 
@@ -157,53 +157,53 @@ NS (sys-botbase) : 192.168.1.5:6000    ← Switch 的地址（可在设置里改
 
 ```
 anomaly-forge/
-├── index.html            ← 单文件网页（6 个 js 内联在里面）
+├── index.html            ← 页面骨架 + 8 个外链 script
 ├── sw.js                 ← Service Worker（缓存策略）
 ├── manifest.webmanifest  ← PWA 清单
 ├── icon.svg / icon-maskable.svg
 ├── 中转服务.py            ← 本地 HTTP 中转 + 静态托管
 ├── 中转服务.sh            ← Termux/手机启动脚本
-├── js/                   ← 源码（改这里！）
-│   ├── data.js           ← 怪物表 / 地图表 / 枚举 / 字段定义 / APP_VERSION
-│   ├── bridge.js         ← 与中转服务的 HTTP 通信
-│   ├── memory.js         ← 内存读写底层（peek/poke 封装、大块读写）
-│   ├── quest.js          ← 任务结构解析 / 批量读写
-│   ├── store.js          ← 数据源管理（在线 / 文件）
-│   └── app.js            ← 界面逻辑（渲染 / 编辑 / 批量 / 筛选）
-└── botbase/
-    ├── _inline.py        ← 把 js/ 内联进 index.html + 同步 sw.js 缓存名
-    ├── 中转服务.py
-    └── sys-botbase-master/   ← Switch 端源码参考
+└── js/                   ← 源码（改这里！）
+    ├── data.js           ← 怪物表 / 地图表 / 枚举 / 字段定义 / APP_VERSION
+    ├── items.js          ← 物品 ID 表（1617 条）
+    ├── cheats.js         ← 金手指定义
+    ├── bridge.js         ← 与中转服务的 HTTP 通信
+    ├── memory.js         ← 内存读写底层（peek/poke 封装、大块读写）
+    ├── quest.js          ← 任务结构解析 / 批量读写
+    ├── store.js          ← 数据源管理（在线 / 文件）
+    └── app.js            ← 界面逻辑（渲染 / 编辑 / 批量 / 筛选）
 ```
 
 ---
 
 ## 🔧 开发 / 发版流程
 
-### ⚠️ 重要：改代码只改 `js/`，不要改 `index.html`
+### ✅ 改代码直接改 `js/`，不用构建
 
-`index.html` 是**生成出来的**。改完 `js/` 后必须跑：
+本项目**已从「内联」改为「外链」**（v1.38.0）：
 
-```bash
-python3 botbase/_inline.py
+```html
+<!-- ===== app.js ===== -->
+<script src="./js/app.js"></script>
 ```
 
-它会做两件事：
+`js/` 是唯一来源，**改完直接刷新浏览器就生效**，不再需要任何同步脚本。
 
-1. 把 `js/*.js` 内联进 `index.html`
-2. **读 `js/data.js` 的 `APP_VERSION`，写进 `sw.js` 的缓存名**
+> 早期版本把 JS 内联进 `index.html`，改完必须跑 `botbase/_inline.py` 同步。
+> 那样会导致同一份代码存两处，已经在 v1.38.0 彻底去掉了。
 
-### 发新版的完整步骤
+### 发新版的步骤
 
 1. 改 `js/` 里的代码
 2. 改 `js/data.js` 里的版本号：
    ```js
-   var APP_VERSION = 'v1.0.1';   // ← 改成新版本号
+   var APP_VERSION = 'v1.38.1';   // ← 改成新版本号
    ```
-3. 跑同步：
-   ```bash
-   python3 botbase/_inline.py
+3. 改 `sw.js` 里的缓存名，与版本号保持一致：
+   ```js
+   const CACHE = 'anomaly-forge-v1.38.1';
    ```
+   （改这个是为了让老用户的 Service Worker 换新缓存，否则可能还读旧的）
 4. **完事** ✅
 
 **用户端更新方式**：
@@ -230,7 +230,7 @@ python3 botbase/_inline.py
 | 跨域请求 | ❌ 直接放行 |
 | 带 `?_t=` 的请求（点"检查更新"）| ❌ 走网络，不写缓存 |
 
-**缓存名会随版本自动变**（`anomaly-forge-v1.0.0`），
+**缓存名会随版本自动变**（`anomaly-forge-v1.38.0`），
 所以**发新版后 `activate` 时能自动清掉上一版缓存** ✅
 
 ---
@@ -357,18 +357,30 @@ var MONSTERS = {
 
 ### 改了代码没生效
 
-1. **改的是 `js/` 还是 `index.html`？** 必须改 `js/`
-2. **跑 `python3 botbase/_inline.py` 了吗？**
-3. **浏览器缓存**：点标题栏版本号强制更新，或 `Ctrl+Shift+R`
+1. **改的是 `js/` 还是 `index.html`？** 必须改 `js/`（`index.html` 现在只是外链引用）
+2. **浏览器缓存**：点标题栏版本号强制更新，或 `Ctrl+Shift+R`
+
+> 已改成外链，**不需要**再跑任何同步脚本（旧的 `_inline.py` 已删除）。
 
 ### 版本号没变
 
 - 检查 `js/data.js` 第 8 行的 `APP_VERSION`
-- 跑完 `_inline.py` 后看输出有没有 `✅ sw.js 缓存名 → ...`
+- 同步改 `sw.js` 第 15 行的 `CACHE`，两边版本号必须一致
 
 ---
 
 ## 📜 更新日志
+
+### v1.38.0
+- 🏗 **架构改造：JS 从「内联」改为「外链」**
+  - `index.html` 从 247 KB 降到 **15.8 KB**（只剩页面骨架 + 8 个 `<script src>`）
+  - **同一份代码不再存两份**，`js/` 成为唯一来源
+  - 改完代码**直接刷新浏览器即可生效**，不再需要任何同步脚本
+- 🗑 **删除 `botbase/` 相关脚本**
+  - `_inline.py`（内联构建）、`_uninline.py`（一次性转换脚本）均已移除
+  - 顺带清掉 `index.html.bak` / `index.html.inlined.bak` 等备份
+- 🔧 **`sw.js` 缓存列表更新**：`ASSETS` 从 1 个 js 扩展为**全部 8 个**，保证离线可用
+- 📦 **`sw.js` 版本号改为手动维护**（原由 `_inline.py` 自动写入），发版时需与 `js/data.js` 的 `APP_VERSION` 同步修改
 
 ### v1.13.0
 - 🧪 **新增「脚本」按钮**（工具栏 → `🧪 脚本`）—— **按键自动化测试 / 未来的送道具脚本挂这里**
@@ -463,7 +475,7 @@ var MONSTERS = {
   - **以后要加新金手指，只改 `js/cheats.js` 一个文件** ✅
   - **`js/quest.js`** 只负责通用逻辑（读表 + 读写内存）
   - **`js/app.js`** 只负责通用界面（按数据自动渲染，不写死任何金手指）
-  - **`_inline.py`** 的 `ORDER` 加入了 `cheats.js`
+  - **`_inline.py`** 的 `ORDER` 加入了 `cheats.js`（该脚本已于 v1.38.0 移除）
 - 🧩 **支持两种金手指类型**（数据里的 `type` 字段）
   - **`toggle`**：一个开关按钮（开 / 关）—— 如「任务直接完成」
   - **`modes`**：一排模式按钮（多选一）—— 如「任务倒计时」（正常 / 冻结 / 加速）
@@ -482,7 +494,7 @@ var MONSTERS = {
     ]
   }
   ```
-  然后 **`python3 botbase/_inline.py`** 同步即可 ✅
+  然后 **`python3 botbase/_inline.py`** 同步即可 ✅（**历史做法**，v1.38.0 起改为外链，不再需要）
 
 ### v1.10.0
 
